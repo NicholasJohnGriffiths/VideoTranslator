@@ -1,0 +1,66 @@
+@page
+@model VideoTranslator.Pages.UploadModel
+@{
+    ViewData["Title"] = "Upload video";
+}
+
+<div class="page-heading">
+    <span class="eyebrow">STEP 01 / UPLOAD</span>
+    <h1>Start with your video.</h1>
+    <p class="lead">Choose an English-language MP4 and the language you want to translate into.</p>
+</div>
+<div class="upload-grid">
+    <section class="surface">
+        <form method="post" enctype="multipart/form-data">
+            <div asp-validation-summary="All" class="text-danger" role="alert"></div>
+            <div class="mb-4">
+                <label asp-for="Video" class="form-label">English video</label>
+                <div class="file-panel">
+                    <input asp-for="Video" type="file" accept=".mp4,video/mp4"
+                           class="form-control" aria-describedby="file-help" required />
+                    <p id="file-help" class="form-text mb-0">MP4 only. Maximum @Model.MaxFileSizeMb MB.
+                        Keep your video in English; language detection is not available yet.</p>
+                </div>
+                <span asp-validation-for="Video" class="text-danger"></span>
+            </div>
+            <div class="mb-4">
+                <label asp-for="SelectedLanguage" class="form-label">Translate to</label>
+                <select asp-for="SelectedLanguage" class="form-select" required>
+                    <option value="">Choose a language</option>
+                    @foreach (var language in Model.Languages)
+                    {
+                        <option value="@language.Code">@language.DisplayName</option>
+                    }
+                </select>
+                <span asp-validation-for="SelectedLanguage" class="text-danger"></span>
+            </div>
+            <button type="submit" class="btn btn-primary">Upload &amp; create job</button>
+        </form>
+    </section>
+    <aside class="surface">
+        <h2>What happens next?</h2>
+        <p>Your upload is saved @(StorageConfiguration.Value.IsLocal ? "locally" : "in a private Azure Blob container")
+            with a unique job ID and an <strong>Uploaded</strong> status.</p>
+        <p>The background worker checks the video and extracts its audio, one job at a time.
+            MP4 files must contain video and audio tracks. This step will not generate a translation.
+            @(StorageConfiguration.Value.IsLocal ? "Local storage is selected." : "Azure storage and transfer charges apply.")</p>
+        @if (SpeechConfiguration.Value.Enabled)
+        {
+            <p>Extracted audio is sent to Azure Speech in Australia East for a time-coded English transcript.
+                <strong>Speech usage charges apply.</strong></p>
+        }
+        else
+        {
+            <p>Speech transcription is disabled. Processing stops at Audio ready; no AI service is called.</p>
+        }
+        <p>@(OpenAIConfiguration.Value.Enabled ? "Translation uses private OpenAI in Australia East; usage charges apply. Review and edit the saved script before voice generation."
+            : "Live OpenAI translation is disabled until private routing and permissions are verified. Processing stops before translation; no OpenAI requests are made.")
+            @(SpeechConfiguration.Value.SynthesisEnabled ? "Voice previews are available for translated scripts; synthesis charges apply." : "Voice previews are disabled.")
+            Saved scripts can be approved for full translated audio and timing.
+            The audio review page can queue subtitles and final video rendering after explicit confirmation.</p>
+        <hr />
+        <p class="small mb-0">Local development only.
+            Files remain @(StorageConfiguration.Value.IsLocal ? "on this machine" : "in Azure Storage") until manually removed.
+            Do not upload sensitive footage to a shared development instance.</p>
+    </aside>
+</div>

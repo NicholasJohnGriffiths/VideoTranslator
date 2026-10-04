@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="VideoTranslator.Tests/VideoTranslator.Tests.csproj" />
+  <Project Path="VideoTranslator/VideoTranslator.csproj" />
+</Solution>

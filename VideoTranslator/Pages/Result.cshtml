@@ -1,0 +1,33 @@
+@page "/jobs/{jobId}/result"
+@model VideoTranslator.Pages.ResultModel
+@{
+    ViewData["Title"] = "Translation complete";
+}
+<div class="page-heading">
+    <span class="eyebrow">TRANSLATION COMPLETE</span>
+    <h1>Your translated video.</h1>
+    <p class="lead">@Model.Job.OriginalFileName / @Model.Result.DurationSeconds.ToString("0.00") seconds</p>
+</div>
+<section class="surface">
+    <p>The original audio has been replaced. The picture is preserved; subtitles can be switched on or off.
+        The video, subtitles and script all use the same approved saved text.</p>
+    <video controls preload="metadata" aria-label="Final translated video" style="width:100%;max-height:65vh">
+        <source src="@Url.Page("/Result", "Video", new { jobId = Model.Job.JobId })" type="video/mp4" />
+        <track kind="subtitles" label="@Model.Job.ApprovedSpeech!.Language.DisplayName"
+               srclang="@Model.Job.SelectedLanguage" src="@Url.Page("/Result", "Subtitles", new { jobId = Model.Job.JobId })" />
+    </video>
+    <p data-video-error hidden role="alert">The video could not be loaded. Check your connection or contact the administrator.</p>
+    <p data-subtitle-error hidden role="alert">The subtitles could not be loaded. Try reloading or contact the administrator.</p>
+    <div class="d-flex flex-wrap gap-2 mt-3">
+        <a class="btn btn-primary" asp-page-handler="Download" asp-route-jobId="@Model.Job.JobId">Download video</a>
+        <a class="btn btn-outline-primary" asp-page-handler="DownloadSubtitles" asp-route-jobId="@Model.Job.JobId">Download subtitles</a>
+        <a class="btn btn-outline-primary" asp-page-handler="Script" asp-route-jobId="@Model.Job.JobId">Download approved script</a>
+    </div>
+    <p class="mt-3">MP4 / H.264 / AAC with an embedded switchable subtitle track. Browser subtitles use the separate UTF-8 WebVTT.
+        Subtitle appearance and language shaping depend on your player. Script download is JSON with approved text and source timings.</p>
+</section>
+<a class="btn btn-outline-primary mt-3" asp-page="/Job" asp-route-jobId="@Model.Job.JobId">Back to job</a>
+<a class="btn btn-outline-primary mt-3" asp-page="/TranslatedAudio" asp-route-jobId="@Model.Job.JobId">Review translated audio</a>
+@section Scripts {
+    <script src="~/js/result.js" asp-append-version="true"></script>
+}

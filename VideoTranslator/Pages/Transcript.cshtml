@@ -1,0 +1,32 @@
+@page "/jobs/{jobId}/transcript"
+@model VideoTranslator.Pages.TranscriptModel
+@using VideoTranslator.Services
+@{
+    ViewData["Title"] = "English transcript";
+}
+<div class="page-heading">
+    <span class="eyebrow">ENGLISH TRANSCRIPT</span>
+    <h1>Your time-coded script.</h1>
+    <p class="lead">@Model.Job.OriginalFileName / @Model.Transcript.SourceLanguage /
+        @Model.Transcript.Segments.Count segments</p>
+</div>
+<aside class="notice">
+    <strong>Review the recognised English.</strong>
+    Speech recognition may contain errors.
+    @(OpenAIConfiguration.Value.Enabled ? "Private OpenAI translation is enabled. Review the translated script from the job page when ready."
+        : "Live translation is disabled pending verified private OpenAI routing and identity permissions. The script editor is available for saved translations.")
+</aside>
+<section class="surface" aria-label="Time-coded English transcript">
+    @foreach (var segment in Model.Transcript.Segments)
+    {
+        <article class="transcript-segment">
+            <h2>Segment @segment.Sequence</h2>
+            <p class="segment-timing">
+                <time>@TimecodeFormatter.Format(segment.Start)</time>
+                &ndash; <time>@TimecodeFormatter.Format(segment.End)</time>
+            </p>
+            <p lang="@Model.Transcript.SourceLanguage" dir="ltr">@segment.OriginalText</p>
+        </article>
+    }
+</section>
+<a class="btn btn-outline-primary mt-3" asp-page="/Job" asp-route-jobId="@Model.Job.JobId">Back to job</a>

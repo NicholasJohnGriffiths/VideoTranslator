@@ -1,0 +1,58 @@
+﻿@page
+@model PrivacyModel
+@{
+    ViewData["Title"] = "Storage and privacy";
+}
+<h1>@ViewData["Title"]</h1>
+
+<section class="surface">
+    @if (StorageConfiguration.Value.IsLocal)
+    {
+        <p>This app stores videos and job metadata on this machine, outside the public web directory.
+            @if (!SpeechConfiguration.Value.Enabled && !SpeechConfiguration.Value.SynthesisEnabled && !OpenAIConfiguration.Value.Enabled)
+            {
+                <span>It does not send content to Azure or any AI service.</span>
+            }
+        </p>
+    }
+    else
+    {
+        <p>This app uploads videos and job metadata to a private container in Azure Blob Storage.
+            The configured account is in New Zealand North.</p>
+        <p>Private container means anonymous access is disabled; it does not mean a storage private endpoint
+            is configured. This development instance authenticates with your Azure CLI login over HTTPS.</p>
+    }
+    @if (SpeechConfiguration.Value.Enabled)
+    {
+        <p>Extracted audio is sent over authenticated HTTPS to Azure Speech in Australia East for English
+            transcription. Time-coded transcripts are saved with the job. This crosses New Zealand's border.
+            Speech is not configured with a private endpoint; this differs from the OpenAI connection requirements.</p>
+    }
+    @if (SpeechConfiguration.Value.SynthesisEnabled)
+    {
+        <p>Voice previews send the selected segment's current text, including unsaved edits, to Azure Speech
+            in Australia East over authenticated HTTPS (not a private endpoint). Synthesis is billable.
+            Preview audio is stored privately with the job; previous preview versions remain until manually deleted.
+            Generating a preview does not save your script edits or render a video.</p>
+        <p>Approving full audio generation freezes a copy of the saved script, voice and timings with the job.
+            Uncached spoken segments are sent to the same Speech resource for billable synthesis.
+            Raw segment audio and the assembled timed WAV are retained privately with the job.
+            Rendering requires a separate confirmation after audio review.</p>
+    }
+    <p>@(OpenAIConfiguration.Value.Enabled ? "English transcript text is sent to OpenAI in Australia East through the approved private endpoint. The connection rejects public or unapproved IPs."
+        : "Live OpenAI translation is disabled until private routing and permissions are verified. No transcript is sent to OpenAI.")
+        Machine translations and separate edited scripts are stored alongside each job. Private networking does not keep AI processing within New Zealand.</p>
+    <p>Files are retained until manually deleted by the developer. There is no automatic retention policy yet.</p>
+    <p>Confirmed rendering downloads the original video and approved audio to a unique local temporary folder.
+        FFmpeg replaces the original audio and includes switchable subtitles. The final MP4, UTF-8 WebVTT,
+        approved script snapshot and completion manifest are stored privately with the job.
+        Rendering does not make additional AI requests. Playback/downloads go through the app, not public Blob URLs.
+        Temporary rendering and download files are cleaned after processing or response disposal; crashes may leave files.</p>
+    <p>Uploaded videos are downloaded to a unique temporary processing folder for local FFprobe validation
+        and FFmpeg audio extraction. The folder is cleaned after success, failure or graceful shutdown.
+        A crash may leave temporary files requiring developer cleanup.</p>
+    <p>This local app has no user authentication. A job URL contains a random identifier but is not a substitute
+        for access control. Do not expose this instance publicly or use it for sensitive footage.</p>
+    <p class="mb-0">Before production deployment, add appropriate access controls, private Blob containers,
+        managed identity, retention rules and a privacy policy reflecting the actual Azure integrations.</p>
+</section>

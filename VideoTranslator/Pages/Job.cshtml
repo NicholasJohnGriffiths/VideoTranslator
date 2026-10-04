@@ -1,0 +1,220 @@
+@page "/jobs/{jobId}"
+@model VideoTranslator.Pages.JobModel
+@using VideoTranslator.Models
+@{
+    ViewData["Title"] = "Video job";
+    var finalStage = Model.Job.Status is JobStatus.CreatingSubtitles or JobStatus.RenderingVideo or JobStatus.Completed;
+    var failedFinalStage = Model.Job.Status == JobStatus.Failed
+        && Model.Job.FailedAtStatus is JobStatus.CreatingSubtitles or JobStatus.RenderingVideo;
+}
+
+<div class="page-heading">
+    <span class="eyebrow">YOUR VIDEO JOB</span>
+    <h1>@(Model.Job.Status switch
+        {
+            JobStatus.AudioReady => "Audio ready.",
+            JobStatus.Transcribing => "Transcribing English.",
+            JobStatus.TranscriptReady => "English transcript ready.",
+            JobStatus.Translating => "Translating your script.",
+            JobStatus.AwaitingScriptReview => "Your translation is ready to review.",
+            JobStatus.GeneratingSpeech => "Generating translated audio.",
+            JobStatus.TranslatedAudioReady => "Translated audio ready.",
+            JobStatus.CreatingSubtitles => "Creating subtitles.",
+            JobStatus.RenderingVideo => "Rendering your video.",
+            JobStatus.Completed => "Translation complete.",
+            JobStatus.ExtractingAudio => "Extracting audio.",
+            JobStatus.Failed => "Processing failed.",
+            _ => "Upload saved."
+        })</h1>
+    <p class="lead">Your video and selected language have been saved
+        @(StorageConfiguration.Value.IsLocal ? "on this machine" : "in a private Azure Blob container").</p>
+</div>
+<section class="surface">
+    <div class="job-title">
+        <h2>@Model.Job.OriginalFileName</h2>
+        <span class="status-badge">@Model.Job.Status</span>
+    </div>
+    <dl class="job-details">
+        <dt>Job ID</dt>
+        <dd><code>@Model.Job.JobId</code></dd>
+        <dt>Target language</dt>
+        <dd>@(Model.Language?.DisplayName ?? Model.Job.SelectedLanguage)</dd>
+        <dt>Video size</dt>
+        <dd>@((Model.Job.FileSizeBytes / 1024d / 1024d).ToString("0.00")) MB</dd>
+        <dt>Created (UTC)</dt>
+        <dd><time datetime="@Model.Job.CreatedUtc.ToString("O")">@Model.Job.CreatedUtc.ToString("yyyy-MM-dd HH:mm:ss")</time></dd>
+    </dl>
+    <ol class="job-steps">
+        <li class="done"><strong>Upload saved</strong><span>Complete</span></li>
+        <li class="@(finalStage || failedFinalStage || Model.Job.Status is JobStatus.AudioReady or JobStatus.Transcribing or JobStatus.TranscriptReady or JobStatus.Translating or JobStatus.AwaitingScriptReview or JobStatus.GeneratingSpeech or JobStatus.TranslatedAudioReady ? "done" : "")">
+            <strong>Validate video &amp; extract audio</strong>
+            <span>@(Model.Job.Status switch
+                {
+                    JobStatus.Uploaded => "Queued",
+                    JobStatus.ExtractingAudio => "Processing",
+                    JobStatus.AudioReady => "Complete",
+                    JobStatus.Failed when failedFinalStage || Model.Job.FailedAtStatus is JobStatus.Transcribing or JobStatus.Translating or JobStatus.GeneratingSpeech => "Complete",
+                    JobStatus.Failed => "Failed",
+                    _ => "Complete"
+                })</span>
+        </li>
+        <li class="@(finalStage || failedFinalStage || Model.Job.Status is JobStatus.TranscriptReady or JobStatus.Translating or JobStatus.AwaitingScriptReview or JobStatus.GeneratingSpeech or JobStatus.TranslatedAudioReady ? "done" : "")">
+            <strong>Transcribe English speech</strong>
+            <span>@(Model.Job.Status switch
+            {
+                JobStatus.TranscriptReady or JobStatus.Translating or JobStatus.AwaitingScriptReview or JobStatus.GeneratingSpeech or JobStatus.TranslatedAudioReady or JobStatus.CreatingSubtitles or JobStatus.RenderingVideo or JobStatus.Completed => "Complete",
+                JobStatus.Transcribing => "Processing",
+                JobStatus.AudioReady when SpeechConfiguration.Value.Enabled => "Queued",
+                JobStatus.Failed when Model.Job.FailedAtStatus == JobStatus.Transcribing => "Failed",
+                JobStatus.Failed when failedFinalStage || Model.Job.FailedAtStatus is JobStatus.Translating or JobStatus.GeneratingSpeech => "Complete",
+                JobStatus.Failed => "Stopped",
+                _ => SpeechConfiguration.Value.Enabled ? "Waiting for audio" : "Disabled"
+            })</span>
+        </li>
+        <li class="@(finalStage || failedFinalStage || Model.Job.Status is JobStatus.AwaitingScriptReview or JobStatus.GeneratingSpeech or JobStatus.TranslatedAudioReady ? "done" : "")">
+            <strong>Translate &amp; review script</strong>
+            <span>@(Model.Job.Status switch
+            {
+                JobStatus.AwaitingScriptReview => "Ready for review",
+                JobStatus.GeneratingSpeech or JobStatus.TranslatedAudioReady or JobStatus.CreatingSubtitles or JobStatus.RenderingVideo or JobStatus.Completed => "Approved",
+                JobStatus.Failed when failedFinalStage || Model.Job.FailedAtStatus == JobStatus.GeneratingSpeech => "Approved",
+                JobStatus.TranscriptReady when OpenAIConfiguration.Value.Enabled => "Queued",
+                JobStatus.Translating when OpenAIConfiguration.Value.Enabled => "Processing",
+                JobStatus.Failed when Model.Job.FailedAtStatus == JobStatus.Translating => "Failed",
+                _ => OpenAIConfiguration.Value.Enabled ? "Waiting for transcript" : "Disabled: private routing required"
+            })</span>
+        </li>
+        <li class="@(finalStage || failedFinalStage || Model.Job.Status == JobStatus.TranslatedAudioReady ? "done" : "")">
+            <strong>Generate &amp; time translated audio</strong><span>@(Model.Job.Status switch
+            {
+                JobStatus.TranslatedAudioReady or JobStatus.CreatingSubtitles or JobStatus.RenderingVideo or JobStatus.Completed => "Complete",
+                JobStatus.Failed when failedFinalStage => "Complete",
+                JobStatus.GeneratingSpeech when SpeechConfiguration.Value.SynthesisEnabled => "Processing",
+                JobStatus.Failed when Model.Job.FailedAtStatus == JobStatus.GeneratingSpeech => "Failed",
+                _ => SpeechConfiguration.Value.SynthesisEnabled ? "Waiting for script approval" : "Disabled"
+            })</span>
+        </li>
+        <li class="@(Model.Job.Status is JobStatus.RenderingVideo or JobStatus.Completed ? "done" : "")">
+            <strong>Create subtitles</strong><span>@(Model.Job.Status switch
+            {
+                JobStatus.CreatingSubtitles => "Processing",
+                JobStatus.RenderingVideo or JobStatus.Completed => "Complete",
+                JobStatus.Failed when Model.Job.FailedAtStatus == JobStatus.CreatingSubtitles => "Failed",
+                JobStatus.Failed when Model.Job.FailedAtStatus == JobStatus.RenderingVideo => "Complete",
+                _ => "Waiting for rendering approval"
+            })</span>
+        </li>
+        <li class="@(Model.Job.Status == JobStatus.Completed ? "done" : "")">
+            <strong>Render &amp; download video</strong><span>@(Model.Job.Status switch
+            {
+                JobStatus.RenderingVideo => "Processing",
+                JobStatus.Completed => "Complete",
+                JobStatus.Failed when Model.Job.FailedAtStatus == JobStatus.RenderingVideo => "Failed",
+                _ => "Waiting for subtitles"
+            })</span>
+        </li>
+    </ol>
+</section>
+<aside class="notice">
+    @if (Model.Job.Status == JobStatus.Failed)
+    {
+        <strong>Processing failed.</strong>
+        <span>@Model.Job.ErrorMessage</span>
+    }
+    else if (Model.Job.Status == JobStatus.TranscriptReady)
+    {
+        <strong>English transcript complete.</strong>
+        <span>Time-coded English segments are saved with this job.
+            @(OpenAIConfiguration.Value.Enabled ? "Private OpenAI translation is queued; usage charges apply."
+                : "Live OpenAI translation is disabled until private routing and identity permissions are verified. No public fallback is permitted.")</span>
+    }
+    else if (Model.Job.Status == JobStatus.Translating)
+    {
+        <strong>Translation @(OpenAIConfiguration.Value.Enabled ? "in progress." : "paused.")</strong>
+        <span>@(OpenAIConfiguration.Value.Enabled ? "The English transcript is being translated through the approved private endpoint in Australia East. OpenAI usage charges apply."
+            : "Live translation is disabled. Verify private routing before enabling it.")</span>
+    }
+    else if (Model.Job.Status == JobStatus.AwaitingScriptReview)
+    {
+        <strong>Review your translated script.</strong>
+        <span>Edit or reset individual segments. Saving preserves the original English, timestamps and machine translation.</span>
+        @if (Model.Job.ReviewMessage is not null)
+        {
+            <p role="alert">@Model.Job.ReviewMessage</p>
+        }
+    }
+    else if (Model.Job.Status == JobStatus.GeneratingSpeech)
+    {
+        <strong>Full audio @(SpeechConfiguration.Value.SynthesisEnabled ? "generation queued or running." : "generation paused.")</strong>
+        <span>Generation uses the approved saved script and configured voice. New synthesis is billable.
+            Speech is fitted up to 1.25x speed; timing issues return the job to review without cutting words off.</span>
+    }
+    else if (Model.Job.Status == JobStatus.TranslatedAudioReady)
+    {
+        <strong>Your translated voice track is ready.</strong>
+        <span>Listen to the track, then explicitly confirm rendering to replace the original audio and include switchable subtitles.</span>
+    }
+    else if (Model.Job.Status is JobStatus.CreatingSubtitles or JobStatus.RenderingVideo)
+    {
+        <strong>Final output queued or processing.</strong>
+        <span>The frozen approved script supplies subtitles and the completed track replaces the original audio.
+            No new AI requests are made. Rendering uses server CPU, temporary disk and private storage.
+            This page refreshes automatically.</span>
+    }
+    else if (Model.Job.Status == JobStatus.Completed)
+    {
+        <strong>Your translated video is ready.</strong>
+        <span>Play or download the MP4, switch subtitles on or off, and download the approved script and UTF-8 WebVTT.</span>
+    }
+    else if (Model.Job.Status == JobStatus.Transcribing)
+    {
+        <strong>Recognising English speech.</strong>
+        <span>Extracted audio is being sent to Azure Speech in Australia East.
+            This page refreshes automatically. Speech usage charges apply.</span>
+    }
+    else if (Model.Job.Status == JobStatus.AudioReady && !SpeechConfiguration.Value.Enabled)
+    {
+        <strong>Audio extraction complete.</strong>
+        <span>Mono 16 kHz PCM WAV audio is saved with this job. Speech transcription is disabled in configuration.</span>
+    }
+    else
+    {
+        <strong>Queued for background processing.</strong>
+        <span>One job runs at a time. This page refreshes automatically while processing is pending.
+            Storage failures are logged and pending jobs are retried; prolonged waiting may require administrator attention.</span>
+    }
+    You can bookmark this page; job details survive application restarts
+    @(StorageConfiguration.Value.IsLocal ? "on the same machine" : "when using the same Azure container").
+</aside>
+<a asp-page="/Upload" class="btn btn-outline-primary">Upload another video</a>
+@if (finalStage || failedFinalStage || Model.Job.Status is JobStatus.TranscriptReady or JobStatus.Translating or JobStatus.AwaitingScriptReview or JobStatus.GeneratingSpeech or JobStatus.TranslatedAudioReady
+    || (Model.Job.Status == JobStatus.Failed && Model.Job.FailedAtStatus is JobStatus.Translating or JobStatus.GeneratingSpeech))
+{
+    <a asp-page="/Transcript" asp-route-jobId="@Model.Job.JobId" class="btn btn-primary">View English transcript</a>
+}
+@if (Model.Job.Status == JobStatus.AwaitingScriptReview)
+{
+    <a asp-page="/Script" asp-route-jobId="@Model.Job.JobId" class="btn btn-primary">Review &amp; edit script</a>
+}
+@if (finalStage || Model.Job.Status == JobStatus.TranslatedAudioReady)
+{
+    <a asp-page="/TranslatedAudio" asp-route-jobId="@Model.Job.JobId" class="btn btn-primary">Listen &amp; download translated audio</a>
+}
+@if (finalStage || failedFinalStage || Model.Job.Status is JobStatus.GeneratingSpeech or JobStatus.TranslatedAudioReady)
+{
+    <a asp-page="/Script" asp-route-jobId="@Model.Job.JobId" class="btn btn-outline-primary">View approved script</a>
+}
+@if (Model.Job.Status == JobStatus.Completed)
+{
+    <a asp-page="/Result" asp-route-jobId="@Model.Job.JobId" class="btn btn-primary">Play &amp; download video</a>
+}
+@if (Model.Job.Status is JobStatus.Uploaded or JobStatus.ExtractingAudio or JobStatus.Transcribing
+    || (Model.Job.Status == JobStatus.AudioReady && SpeechConfiguration.Value.Enabled)
+    || (Model.Job.Status is JobStatus.TranscriptReady or JobStatus.Translating && OpenAIConfiguration.Value.Enabled)
+    || (Model.Job.Status == JobStatus.GeneratingSpeech && SpeechConfiguration.Value.SynthesisEnabled)
+    || Model.Job.Status is JobStatus.CreatingSubtitles or JobStatus.RenderingVideo)
+{
+    @section Scripts {
+        <script src="~/js/job.js" asp-append-version="true"></script>
+    }
+}

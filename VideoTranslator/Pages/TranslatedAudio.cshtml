@@ -1,0 +1,53 @@
+@page "/jobs/{jobId}/audio"
+@model VideoTranslator.Pages.TranslatedAudioModel
+@using VideoTranslator.Models
+@{
+    ViewData["Title"] = "Translated audio";
+}
+<div class="page-heading">
+    <span class="eyebrow">TRANSLATED AUDIO</span>
+    <h1>Your timed voice track.</h1>
+    <p class="lead">@Model.Job.OriginalFileName / @Model.Result.DurationSeconds.ToString("0.00") seconds</p>
+</div>
+<section class="surface">
+    <p>The approved script has been synthesized and aligned with its original time slots.
+        Leading, intervening and trailing silence are preserved. This is the audio track, not a rendered video.</p>
+    <audio controls preload="none" aria-label="Full translated voice track">
+        <source src="@Url.Page("/TranslatedAudio", "File", new { jobId = Model.Job.JobId })" type="audio/wav" />
+    </audio>
+    <p data-audio-error hidden role="alert">The audio track could not be loaded. Check your connection or contact the administrator.</p>
+    <a class="btn btn-primary mt-3" asp-page-handler="Download" asp-route-jobId="@Model.Job.JobId">Download translated WAV</a>
+    <div class="table-responsive mt-3">
+        <table class="table">
+            <thead><tr><th>Segment</th><th>Generated speech</th><th>Original slot</th><th>Speed</th></tr></thead>
+            <tbody>
+                @foreach (var timing in Model.Result.Segments)
+                {
+                    <tr><td>@timing.Sequence</td><td>@timing.SourceSeconds.ToString("0.00") s</td>
+                        <td>@timing.SlotSeconds.ToString("0.00") s</td><td>@timing.Speed.ToString("0.000")x</td></tr>
+                }
+            </tbody>
+        </table>
+    </div>
+    @if (Model.Job.Status == JobStatus.TranslatedAudioReady)
+    {
+        <form method="post" asp-page-handler="Render" asp-route-jobId="@Model.Job.JobId" class="mt-3">
+            <div class="form-check">
+                <input type="checkbox" name="confirmRendering" value="true" id="confirmRendering" class="form-check-input" />
+                <label for="confirmRendering" class="form-check-label">Replace the original audio with this translated track and render the final video.</label>
+            </div>
+            <p>Uses the frozen approved script. Includes switchable subtitles and a separate UTF-8 WebVTT download.
+                No new Speech or OpenAI requests. Rendering uses server CPU, disk and storage; no burned-in subtitles.</p>
+            <button type="submit" class="btn btn-primary">Render final video</button>
+        </form>
+    }
+    @if (Model.Job.Status == JobStatus.Completed)
+    {
+        <a asp-page="/Result" asp-route-jobId="@Model.Job.JobId" class="btn btn-primary mt-3">View final video</a>
+    }
+</section>
+<a class="btn btn-outline-primary mt-3" asp-page="/Job" asp-route-jobId="@Model.Job.JobId">Back to job</a>
+<a class="btn btn-outline-primary mt-3" asp-page="/Script" asp-route-jobId="@Model.Job.JobId">View approved script</a>
+@section Scripts {
+    <script src="~/js/translated-audio.js" asp-append-version="true"></script>
+}

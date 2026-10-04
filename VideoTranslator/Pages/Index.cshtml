@@ -1,0 +1,42 @@
+﻿@page
+@model IndexModel
+@{
+    ViewData["Title"] = "Video translation";
+}
+
+<section class="hero">
+    <span class="eyebrow">VIDEO TRANSLATOR / LOCAL DEVELOPMENT</span>
+    <h1>Your video.<br />A new language.</h1>
+    <p class="lead">Prepare English videos for Mandarin Chinese, Arabic, Spanish and Hindi audiences.</p>
+    <a class="btn btn-primary btn-lg" asp-page="/Upload">Upload a video</a>
+</section>
+<section class="workflow-grid" aria-label="Planned translation workflow">
+    <article class="surface">
+        <span class="step-number">01</span>
+        <h2>Upload &amp; select</h2>
+        <p>Choose an English MP4 and a target language. Your video gets its own persistent job.</p>
+    </article>
+    <article class="surface">
+        <span class="step-number">02</span>
+        <h2>Review the script</h2>
+        <p>Review saved time-coded translations, edit each segment and preview its configured voice.</p>
+    </article>
+    <article class="surface">
+        <span class="step-number">03</span>
+        <h2>Render &amp; download</h2>
+        <p>Approve a timed voice track, then render a downloadable MP4 with switchable subtitles.</p>
+    </article>
+</section>
+<aside class="notice">
+    <strong>Local development workflow.</strong>
+    Uploads and job tracking use @(StorageConfiguration.Value.IsLocal ? "local files" : "a private Azure Blob container").
+    Videos are validated and audio is extracted in the background, one job at a time.
+    @(SpeechConfiguration.Value.Enabled ? "English speech is transcribed using Azure Speech in Australia East; Speech charges apply." : "Speech transcription is disabled.")
+    @(OpenAIConfiguration.Value.Enabled ? "Translation uses the approved private OpenAI endpoint in Australia East; OpenAI charges apply."
+        : "Live translation is disabled pending verified private OpenAI routing and permissions. No public fallback is permitted.")
+    Script editing is available for saved translations.
+    @(SpeechConfiguration.Value.SynthesisEnabled ? "On-demand voice previews use Azure Speech; synthesis charges apply." : "Voice previews are disabled.")
+    Approved scripts can generate a timed full audio track, UTF-8 subtitles and a final MP4.
+    Rendering requires confirmation after audio review.
+    @(StorageConfiguration.Value.IsLocal ? "Local file storage is selected." : "Azure Storage usage is billable.")
+</aside>

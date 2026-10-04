@@ -1,0 +1,113 @@
+@page "/jobs/{jobId}/script"
+@model VideoTranslator.Pages.ScriptModel
+@using VideoTranslator.Services
+@{
+    ViewData["Title"] = "Review translated script";
+}
+<div class="page-heading">
+    <span class="eyebrow">SCRIPT REVIEW</span>
+    <h1>Make it sound like you.</h1>
+    <p class="lead">@Model.Job.OriginalFileName / @Model.Language.DisplayName /
+        @Model.Translation.Segments.Count segments</p>
+</div>
+<aside class="notice">
+    <strong>Original timestamps and machine translation are preserved.</strong>
+    Editing automatically selects your text. Without JavaScript, uncheck "Use original translation" to edit a segment.
+    A blank edit deliberately produces empty text.
+    Check it again to reset that segment when saving. Saving does not generate voices or render video.
+    @if (Model.CanPreview)
+    {
+        <span>Preview uses the selected segment's current text, including unsaved edits, without saving the script.
+            New previews send text to Azure Speech in Australia East and incur synthesis charges.
+            Identical text and voice reuse saved audio.</span>
+    }
+    else
+    {
+        <span>Voice generation is disabled or the job is no longer awaiting review.</span>
+    }
+</aside>
+@if (Model.Saved)
+{
+    <p class="notice" role="status">Script saved. Your edits will be used for future speech and subtitle generation.</p>
+}
+@if (Model.Job.ReviewMessage is not null)
+{
+    <p class="notice" role="alert">@Model.Job.ReviewMessage</p>
+}
+<form method="post" asp-page="/Script" asp-route-jobId="@Model.Job.JobId" class="surface">
+    <div asp-validation-summary="All" class="text-danger" role="alert"></div>
+    <input asp-for="Revision" type="hidden" />
+    @for (var index = 0; index < Model.Translation.Segments.Count; index++)
+    {
+        var segment = Model.Translation.Segments[index];
+        <article class="transcript-segment">
+            <h2>Segment @segment.Sequence</h2>
+            <p class="segment-timing">@TimecodeFormatter.Format(segment.Start) &ndash; @TimecodeFormatter.Format(segment.End)</p>
+            <h3 class="h6">Original English</h3>
+            <p lang="en" dir="ltr">@segment.OriginalText</p>
+            <h3 class="h6">Original machine translation</h3>
+            <p lang="@Model.Language.Code" dir="@(Model.Language.IsRightToLeft ? "rtl" : "ltr")">@segment.TranslatedText</p>
+            <input asp-for="Segments[index].Sequence" type="hidden" />
+            <label asp-for="Segments[index].Text" class="form-label">Edited text for segment @segment.Sequence</label>
+            <textarea asp-for="Segments[index].Text" rows="3" maxlength="8000" class="form-control" data-script-edit
+                      lang="@Model.Language.Code" dir="@(Model.Language.IsRightToLeft ? "rtl" : "ltr")"
+                      readonly="@(!Model.CanEdit)"></textarea>
+            <span asp-validation-for="Segments[index].Text" class="text-danger"></span>
+            <div class="form-check mt-2">
+                <input asp-for="Segments[index].UseOriginal" class="form-check-input" disabled="@(!Model.CanEdit)" />
+                <label asp-for="Segments[index].UseOriginal" class="form-check-label">Use original translation (reset this segment)</label>
+            </div>
+            @if (Model.CanPreview)
+            {
+                <button type="submit" asp-page-handler="Preview" asp-route-sequence="@segment.Sequence"
+                        class="btn btn-outline-primary mt-3">Preview voice for segment @segment.Sequence</button>
+            }
+            @if (Model.Preview?.Sequence == segment.Sequence)
+            {
+                <div class="notice mt-3" data-voice-preview>
+                    <p role="status">@(Model.Preview.Reused ? "Saved preview reused." : "Voice preview generated.")
+                        Duration: @Model.Preview.Duration.TotalSeconds.ToString("0.00") seconds.
+                        Original slot: @Model.PreviewSlotSeconds.ToString("0.00") seconds.
+                        This preview is not timing-fitted and does not change the job or saved script.</p>
+                    @if (Model.Preview.Duration.TotalSeconds > Model.PreviewSlotSeconds)
+                    {
+                        <p>The spoken text is longer than the original slot. Shorten the wording before the later timing/rendering stage.</p>
+                    }
+                    <audio controls preload="none" aria-label="Voice preview for segment @segment.Sequence">
+                        <source src="@Url.Page("/VoicePreview", new { jobId = Model.Job.JobId, sequence = segment.Sequence, key = Model.Preview.Key })" type="audio/wav" />
+                    </audio>
+                    <p hidden data-preview-error role="alert">Preview audio could not be loaded. Check the connection or contact the administrator.</p>
+                </div>
+            }
+        </article>
+    }
+    @if (Model.CanEdit)
+    {
+        <button class="btn btn-primary mt-3" type="submit">Save script</button>
+        @if (Model.CanPreview)
+        {
+            <div class="notice mt-3">
+                <div class="form-check">
+                    <input asp-for="ApprovalConfirmed" class="form-check-input" />
+                    <label asp-for="ApprovalConfirmed" class="form-check-label">
+                        I approve the saved script for full audio generation and understand new Speech synthesis is billable.
+                    </label>
+                </div>
+                <p>Save changes first. Generation freezes the saved text, voice and timestamps.
+                    Speech may be accelerated up to 1.25x without changing pitch; if it cannot fit cleanly,
+                    the job returns to review. Blank segments remain silent. Overlapping time slots are not supported yet.
+                    This does not render the video.</p>
+                <button type="submit" asp-page-handler="Generate" class="btn btn-primary">Generate full translated audio</button>
+            </div>
+        }
+    }
+    else
+    {
+        <p>This job is no longer awaiting script review; edits are read-only.</p>
+    }
+    <a asp-page="/Script" asp-route-jobId="@Model.Job.JobId" class="btn btn-outline-primary mt-3">Reload saved script</a>
+</form>
+<a asp-page="/Job" asp-route-jobId="@Model.Job.JobId" class="btn btn-outline-primary mt-3">Back to job</a>
+@section Scripts {
+    <script src="~/js/script-editor.js" asp-append-version="true"></script>
+}
