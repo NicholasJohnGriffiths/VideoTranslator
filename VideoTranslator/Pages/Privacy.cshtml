@@ -20,7 +20,9 @@
         <p>This app uploads videos and job metadata to a private container in Azure Blob Storage.
             The configured account is in New Zealand North.</p>
         <p>Private container means anonymous access is disabled; it does not mean a storage private endpoint
-            is configured. This development instance authenticates with your Azure CLI login over HTTPS.</p>
+            is configured. @(HostingEnvironment.IsDevelopment()
+                ? "This development instance authenticates with your Azure CLI login over HTTPS."
+                : "This Azure app authenticates with its managed identity over HTTPS.")</p>
     }
     @if (SpeechConfiguration.Value.Enabled)
     {
@@ -48,11 +50,28 @@
         approved script snapshot and completion manifest are stored privately with the job.
         Rendering does not make additional AI requests. Playback/downloads go through the app, not public Blob URLs.
         Temporary rendering and download files are cleaned after processing or response disposal; crashes may leave files.</p>
-    <p>Uploaded videos are downloaded to a unique temporary processing folder for local FFprobe validation
+    <p>Uploaded videos are downloaded to a unique temporary processing folder on the app's host for FFprobe validation
         and FFmpeg audio extraction. The folder is cleaned after success, failure or graceful shutdown.
         A crash may leave temporary files requiring developer cleanup.</p>
-    <p>This local app has no user authentication. A job URL contains a random identifier but is not a substitute
-        for access control. Do not expose this instance publicly or use it for sensitive footage.</p>
+    @if (HostingConfiguration.Value.UsesSingleAccountLogin)
+    {
+        <p>The app requires a shared-account username and password. The password is verified against a salted hash
+            stored in server configuration, not in source code. Sessions use secure, HTTP-only cookies and expire
+            after eight hours; signing out removes the browser's session. Login attempts are limited.</p>
+        <p>Everyone using the shared account can access all jobs in this app's container. This is not individual
+            user isolation or multi-factor authentication. A random job URL is not authorization.</p>
+    }
+    else if (HostingEnvironment.IsDevelopment())
+    {
+        <p>This local app has no user authentication. A job URL contains a random identifier but is not a substitute
+            for access control. Do not expose this instance publicly or use it for sensitive footage.</p>
+    }
+    else
+    {
+        <p>Microsoft Entra sign-in is enforced by App Service and the app restricts access to the approved tenant
+            and user. All jobs in this app's container are available to that account; this is not a multi-user
+            isolation model. A random job URL is not authorization.</p>
+    }
     <p class="mb-0">Before production deployment, add appropriate access controls, private Blob containers,
         managed identity, retention rules and a privacy policy reflecting the actual Azure integrations.</p>
 </section>

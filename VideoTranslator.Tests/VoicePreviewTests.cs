@@ -50,6 +50,54 @@ public sealed class VoicePreviewTests : IDisposable
         new HttpClient(handler), new Credential(), Options.Create(options ?? Settings()),
         NullLogger<AzureSpeechSynthesisService>.Instance);
 
+    [Fact]
+    public async Task TrackedPreviewsCountUnsavedUnicodeTextOnceAndCacheReuseCostsNothing()
+    {
+        var usage = new JobUsageService(new LocalJobUsageStorage(directory), Options.Create(new JobCostOptions()));
+        var handler = new Handler();
+        var speech = new AzureSpeechSynthesisService(new HttpClient(handler), new Credential(),
+            Options.Create(Settings()), NullLogger<AzureSpeechSynthesisService>.Instance, usage);
+        var service = new VoicePreviewService(speech, new StorageStub(), NullLogger<VoicePreviewService>.Instance);
+        var job = ReviewJob();
+        var text = "Hi \U0001F600";
+        await service.GenerateAsync(job, Segment(), text, Language(), None);
+        await service.GenerateAsync(job, Segment(), text, Language(), None);
+        var cost = await usage.GetAsync(job.JobId, None);
+        Assert.Equal(1, handler.Calls);
+        Assert.Equal(4, Assert.Single(cost.CompletedRequests).Characters);
+        Assert.Equal(4m / 1_000_000 * 26.4994m, cost.KnownNzd);
+        Assert.Equal(0, cost.UnresolvedRequests);
+    }
+
+    [Fact]
+    public async Task TrackedHttpFailureRetainsUnconfirmedAttempt()
+    {
+        var usage = new JobUsageService(new LocalJobUsageStorage(directory), Options.Create(new JobCostOptions()));
+        var handler = new Handler { Status = HttpStatusCode.ServiceUnavailable };
+        var service = new AzureSpeechSynthesisService(new HttpClient(handler), new Credential(),
+            Options.Create(Settings()), NullLogger<AzureSpeechSynthesisService>.Instance, usage);
+        var id = Guid.NewGuid().ToString("N");
+        await Assert.ThrowsAsync<SpeechSynthesisException>(() =>
+            service.GenerateForJobAsync(id, "hello", Language(), Path.Combine(directory, "failed.wav"), None));
+        var cost = await usage.GetAsync(id, None);
+        Assert.Equal(1, cost.UnresolvedRequests);
+        Assert.Empty(cost.CompletedRequests);
+    }
+
+    [Fact]
+    public async Task FailedUsageRecordingPreventsBillableRequest()
+    {
+        using var harness = new BlobStorageTests.BlobHarness();
+        harness.Handler.MissingContainer = true;
+        var usage = new JobUsageService(new BlobJobUsageStorage(harness.Container), Options.Create(new JobCostOptions()));
+        var handler = new Handler();
+        var service = new AzureSpeechSynthesisService(new HttpClient(handler), new Credential(),
+            Options.Create(Settings()), NullLogger<AzureSpeechSynthesisService>.Instance, usage);
+        await Assert.ThrowsAsync<JobStorageException>(() => service.GenerateForJobAsync(
+            Guid.NewGuid().ToString("N"), "hello", Language(), Path.Combine(directory, "unused.wav"), None));
+        Assert.Equal(0, handler.Calls);
+    }
+
     [Theory]
     [InlineData("zh-CN", "zh-CN-XiaoxiaoNeural")]
     [InlineData("ar-SA", "ar-SA-ZariyahNeural")]

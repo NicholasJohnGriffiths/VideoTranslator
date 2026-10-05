@@ -58,7 +58,7 @@ public sealed class VoicePreviewService(
             var path = Path.Combine(directory, "preview.wav");
             logger.LogInformation("[Job: {JobId}] Synthesizing preview for segment {Sequence} with {Voice}.",
                 job.JobId, segment.Sequence, language.VoiceName);
-            await speech.GenerateSpeechAsync(text, language, path, cancellationToken);
+            await speech.GenerateForJobAsync(job.JobId, text, language, path, cancellationToken);
             await using var input = File.OpenRead(path);
             var bytes = await SpeechWaveAudio.ReadBoundedAsync(input, cancellationToken);
             var duration = SpeechWaveAudio.Validate(bytes);

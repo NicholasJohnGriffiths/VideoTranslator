@@ -18,3 +18,7 @@
 *.mp4
 *.wav
 *.mp3
+**/publish/
+**/artifacts/
+deploy/*.parameters.json
+deploy/*.zip

@@ -1,0 +1,94 @@
+@page
+@model VideoTranslator.Pages.MyVideosModel
+@using VideoTranslator.Models
+@{
+    ViewData["Title"] = "My videos";
+}
+<div class="page-heading">
+    <span class="eyebrow">VIDEO HISTORY</span>
+    <h1>My videos.</h1>
+    <p class="lead">Revisit your uploads, continue script review or watch completed translations.</p>
+    <a asp-page="/Upload" class="btn btn-primary">Upload a video</a>
+    <a asp-page="/MyVideos" asp-route-pageNumber="@Model.PageNumber" class="btn btn-outline-primary">Refresh status</a>
+</div>
+@if (HostingConfiguration.Value.UsesSingleAccountLogin)
+{
+    <aside class="notice">This shared account can see all videos in the app. Files remain until manually removed.</aside>
+}
+@if (Model.ErrorMessage is not null)
+{
+    <p class="notice" role="alert">@Model.ErrorMessage</p>
+}
+else
+{
+    @if (Model.UnreadableCount > 0)
+    {
+        <p class="notice" role="alert">@Model.UnreadableCount job record(s) could not be read and are not shown. Contact the administrator to repair them.</p>
+    }
+    @if (Model.TotalCount == 0)
+    {
+        <section class="surface">
+            <h2>@(Model.UnreadableCount > 0 ? "No readable videos." : "No videos yet.")</h2>
+            <p>Upload an English MP4 to start. Your saved jobs will appear here.</p>
+        </section>
+    }
+    else
+    {
+        <section class="surface">
+            <p>@Model.TotalCount saved video(s), newest first. Status is updated when you refresh.</p>
+            <div class="table-responsive">
+                <table class="table align-middle">
+                    <thead><tr><th>Video</th><th>Uploaded (UTC)</th><th>Language</th><th>Status</th><th>Estimated AI cost (NZD)</th><th>Actions</th></tr></thead>
+                    <tbody>
+                    @foreach (var job in Model.Jobs)
+                    {
+                        <tr>
+                            <td class="history-filename"><a asp-page="/Job" asp-route-jobId="@job.JobId">@job.OriginalFileName</a></td>
+                            <td><time datetime="@job.CreatedUtc.ToString("O")">@job.CreatedUtc.ToString("yyyy-MM-dd HH:mm")</time></td>
+                            <td>@Model.LanguageName(job)</td>
+                            <td>
+                                <span class="status-badge">@VideoTranslator.Pages.MyVideosModel.StatusLabel(job.Status)</span>
+                                @if (job.ReviewMessage is not null)
+                                {
+                                    <p class="small mt-2 mb-0">@job.ReviewMessage</p>
+                                }
+                                @if (job.Status == JobStatus.Failed)
+                                {
+                                    <p class="small text-danger mt-2 mb-0">@job.ErrorMessage</p>
+                                }
+                            </td>
+                            <td><partial name="_JobCost" model="job" /></td>
+                            <td>
+                                <a asp-page="/Job" asp-route-jobId="@job.JobId">View job</a>
+                                @if (job.Status == JobStatus.Completed)
+                                {
+                                    <a asp-page="/Result" asp-route-jobId="@job.JobId" class="d-block">Watch &amp; download</a>
+                                }
+                                else if (job.Status == JobStatus.AwaitingScriptReview)
+                                {
+                                    <a asp-page="/Script" asp-route-jobId="@job.JobId" class="d-block">Review script</a>
+                                }
+                                else if (job.Status == JobStatus.TranslatedAudioReady)
+                                {
+                                    <a asp-page="/TranslatedAudio" asp-route-jobId="@job.JobId" class="d-block">Review audio &amp; render</a>
+                                }
+                            </td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+            <nav aria-label="Video history pages" class="d-flex flex-wrap gap-3 align-items-center">
+                @if (Model.PageNumber > 1)
+                {
+                    <a asp-page="/MyVideos" asp-route-pageNumber="@(Model.PageNumber - 1)">Previous</a>
+                }
+                <span>Page @Model.PageNumber of @Model.TotalPages</span>
+                @if (Model.PageNumber < Model.TotalPages)
+                {
+                    <a asp-page="/MyVideos" asp-route-pageNumber="@(Model.PageNumber + 1)">Next</a>
+                }
+            </nav>
+        </section>
+    }
+}

@@ -27,7 +27,7 @@ public sealed class TranscriptionProcessor(
             {
                 var audioPath = Path.Combine(directory, "original-audio.wav");
                 await transcripts.DownloadAudioAsync(job.JobId, audioPath, cancellationToken);
-                transcript = await speech.TranscribeAsync(audioPath, cancellationToken);
+                transcript = await speech.TranscribeForJobAsync(job.JobId, audioPath, cancellationToken);
                 await transcripts.SaveTranscriptAsync(job.JobId, transcript, cancellationToken);
             }
             job.TransitionTo(JobStatus.TranscriptReady);

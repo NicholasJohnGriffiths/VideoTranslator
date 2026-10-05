@@ -17,6 +17,7 @@ public sealed class SpeechGenerationProcessor(
         SpeechGenerationMetadata.Validate(script, job.SelectedLanguage);
         var directory = Path.Combine(Path.GetTempPath(), $"VideoTranslator-generate-{Guid.NewGuid():N}");
         Directory.CreateDirectory(directory);
+        var timingIssues = new List<SegmentTimingIssue>();
         try
         {
             var output = Path.Combine(directory, "translated-audio.wav");
@@ -42,7 +43,7 @@ public sealed class SpeechGenerationProcessor(
                 var duration = await inspector.GetVideoDurationAsync(video, cancellationToken);
                 FFmpegSpeechTimingService.ValidateTimeline(script, duration);
                 var paths = new List<string?>();
-                foreach (var segment in script.Segments)
+                foreach (var (segment, index) in script.Segments.Select((segment, index) => (segment, index)))
                 {
                     if (string.IsNullOrWhiteSpace(segment.TranslatedText))
                     {
@@ -57,13 +58,20 @@ public sealed class SpeechGenerationProcessor(
                     try
                     {
                         FFmpegSpeechTimingService.RequiredSpeed(preview.Duration.TotalSeconds,
-                            (segment.End - segment.Start).TotalSeconds, script.MaximumSpeed);
+                            SpeechTimingWindow.SlotSeconds(script, index, duration), script.MaximumSpeed);
                     }
                     catch (SpeechTimingException exception)
                     {
-                        throw new SpeechTimingException($"Segment {segment.Sequence}: {exception.Message}");
+                        timingIssues.Add(new(segment.Sequence, exception.Message));
                     }
                     paths.Add(path);
+                }
+                if (timingIssues.Count > 0)
+                {
+                    throw new SpeechTimingException(
+                        $"Timing checked for all {script.Segments.Count} segments. "
+                        + $"{timingIssues.Count} segment(s) exceed the approved {script.MaximumSpeed:0.00}x limit. "
+                        + string.Join(" ", timingIssues.Select(issue => $"Segment {issue.Sequence}: {issue.Message}")));
                 }
                 var timings = await timing.SynchronizeAsync(script, paths, duration, output, cancellationToken);
                 result = new TimedAudioResult
@@ -81,7 +89,7 @@ public sealed class SpeechGenerationProcessor(
         catch (SpeechTimingException exception)
         {
             logger.LogWarning(exception, "[Job: {JobId}] Speech timing requires script review.", job.JobId);
-            job.ReturnToScriptReview(exception.Message);
+            job.ReturnToScriptReview(exception.Message, timingIssues);
             await jobs.UpdateAsync(job, JobStatus.GeneratingSpeech, cancellationToken);
         }
         catch (Exception exception) when (exception is SpeechSynthesisException or MediaProcessingException or UploadValidationException)

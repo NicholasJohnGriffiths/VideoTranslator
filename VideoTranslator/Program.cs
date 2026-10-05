@@ -1,12 +1,102 @@
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Extensions.Options;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.DataProtection;
+using System.Threading.RateLimiting;
 using Azure.Storage.Blobs;
 using VideoTranslator.Configuration;
 using VideoTranslator.Services;
 
 var builder = WebApplication.CreateBuilder(args);
+var hosting = builder.Configuration.GetSection(AzureHostingOptions.SectionName).Get<AzureHostingOptions>() ?? new();
+if (hosting.AuthenticationMode is not ("MicrosoftEntra" or "SingleAccount"))
+{ throw new InvalidOperationException("AzureHosting:AuthenticationMode must be MicrosoftEntra or SingleAccount."); }
+if (builder.Environment.IsDevelopment() && !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("WEBSITE_SITE_NAME")))
+{ throw new InvalidOperationException("Development mode is not permitted on Azure App Service."); }
+if (!builder.Environment.IsDevelopment() || hosting.Enabled)
+{
+    hosting.Validate(Environment.GetEnvironmentVariable("WEBSITE_SITE_NAME"),
+        Environment.GetEnvironmentVariable("WEBSITE_AUTH_ENABLED"),
+        builder.Configuration.GetSection(JobStorageOptions.SectionName).Get<JobStorageOptions>() ?? new(),
+        builder.Configuration.GetSection(BlobStorageOptions.SectionName).Get<BlobStorageOptions>() ?? new(),
+        builder.Configuration.GetSection(AzureSpeechOptions.SectionName).Get<AzureSpeechOptions>() ?? new(),
+        builder.Configuration.GetSection(AzureOpenAIOptions.SectionName).Get<AzureOpenAIOptions>() ?? new());
+}
 
-builder.Services.AddRazorPages();
+builder.Services.AddOptions<AzureHostingOptions>().BindConfiguration(AzureHostingOptions.SectionName);
+builder.Services.AddRazorPages(options =>
+{
+    if (hosting.UsesSingleAccountLogin)
+    {
+        options.Conventions.AuthorizeFolder("/");
+        options.Conventions.AllowAnonymousToPage("/Login");
+        options.Conventions.AllowAnonymousToPage("/Error");
+    }
+});
+if (hosting.UsesSingleAccountLogin)
+{
+    var login = builder.Configuration.GetSection(SingleAccountLoginOptions.SectionName)
+        .Get<SingleAccountLoginOptions>() ?? new();
+    login.ReadPasswordHash();
+    builder.Services.AddOptions<SingleAccountLoginOptions>().BindConfiguration(SingleAccountLoginOptions.SectionName);
+    builder.Services.AddSingleton<SingleAccountCredentials>();
+    var protection = builder.Services.AddDataProtection().SetApplicationName("VideoTranslator.SingleAccount");
+    if (hosting.Enabled)
+    {
+        var directory = login.ValidateKeyDirectory(
+            builder.Environment.WebRootPath ?? Path.Combine(builder.Environment.ContentRootPath, "wwwroot"));
+        Directory.CreateDirectory(directory);
+        if (OperatingSystem.IsLinux())
+        {
+            File.SetUnixFileMode(directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+        protection.PersistKeysToFileSystem(new DirectoryInfo(directory));
+    }
+    builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
+        .AddCookie(options =>
+        {
+            options.LoginPath = "/Login";
+            options.Cookie.Name = "__Host-VideoTranslator.Session";
+            options.Cookie.Path = "/";
+            options.Cookie.HttpOnly = true;
+            options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+            options.Cookie.SameSite = SameSiteMode.Strict;
+            options.ExpireTimeSpan = TimeSpan.FromHours(8);
+            options.SlidingExpiration = false;
+            options.Events.OnValidatePrincipal = async context =>
+            {
+                if (!context.HttpContext.RequestServices.GetRequiredService<SingleAccountCredentials>()
+                    .IsCurrentPrincipal(context.Principal))
+                {
+                    context.RejectPrincipal();
+                    await context.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+                }
+            };
+        });
+    builder.Services.AddAuthorization(options => options.FallbackPolicy =
+        new AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build());
+    builder.Services.AddRateLimiter(options =>
+    {
+        options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+        options.AddPolicy(SingleAccountCredentials.LoginRateLimitPolicy, context =>
+            HttpMethods.IsPost(context.Request.Method)
+                ? RateLimitPartition.GetFixedWindowLimiter("single-account", _ => new FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = 5, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true
+                })
+                : RateLimitPartition.GetNoLimiter("login-page"));
+        options.OnRejected = async (context, cancellationToken) =>
+        {
+            context.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>()
+                .CreateLogger("SingleAccountLogin").LogWarning("Single-account sign-in rate limit exceeded.");
+            context.HttpContext.Response.Headers["Retry-After"] = "60";
+            await context.HttpContext.Response.WriteAsync(
+                "Too many sign-in attempts. Wait one minute and try again.", cancellationToken);
+        };
+    });
+}
 builder.Services.AddOptions<UploadOptions>()
     .BindConfiguration(UploadOptions.SectionName)
     .ValidateDataAnnotations()
@@ -39,6 +129,12 @@ builder.Services.AddSingleton<ILanguageService, LanguageService>();
 builder.Services.AddSingleton<IUploadValidator, UploadValidator>();
 var storageProvider = builder.Configuration.GetSection(JobStorageOptions.SectionName)
     .Get<JobStorageOptions>() ?? new JobStorageOptions();
+builder.Services.AddOptions<JobCostOptions>().BindConfiguration("JobCosts")
+    .Validate(options => options.TranscriptionPerHour >= 0 && options.SynthesisPerMillionCharacters >= 0
+        && options.InputPerThousandTokens >= 0 && options.CachedInputPerThousandTokens >= 0
+        && options.OutputPerThousandTokens >= 0 && !string.IsNullOrWhiteSpace(options.RateDate),
+        "Job cost rates must be nonnegative and have a rate date.").ValidateOnStart();
+builder.Services.AddSingleton<JobUsageService>();
 if (storageProvider.IsLocal)
 {
     builder.Services.AddSingleton<LocalJobStorageService>();
@@ -48,6 +144,9 @@ if (storageProvider.IsLocal)
     builder.Services.AddSingleton<IVoicePreviewStorageService, LocalVoicePreviewStorageService>();
     builder.Services.AddSingleton<IGeneratedAudioStorageService, LocalGeneratedAudioStorageService>();
     builder.Services.AddSingleton<IRenderedVideoStorageService, LocalRenderedVideoStorageService>();
+    builder.Services.AddSingleton<IJobUsageStorage>(provider => new LocalJobUsageStorage(
+        Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath,
+            provider.GetRequiredService<IOptions<LocalStorageOptions>>().Value.RootPath))));
 }
 else if (storageProvider.Provider == "AzureBlob")
 {
@@ -71,6 +170,7 @@ else if (storageProvider.Provider == "AzureBlob")
     builder.Services.AddSingleton<IVoicePreviewStorageService, BlobVoicePreviewStorageService>();
     builder.Services.AddSingleton<IGeneratedAudioStorageService, BlobGeneratedAudioStorageService>();
     builder.Services.AddSingleton<IRenderedVideoStorageService, BlobRenderedVideoStorageService>();
+    builder.Services.AddSingleton<IJobUsageStorage, BlobJobUsageStorage>();
     builder.Services.AddHostedService<BlobStorageStartupCheck>();
 }
 else
@@ -108,7 +208,8 @@ if (builder.Configuration.GetValue<bool>("AzureSpeech:Enabled"))
         return new AzureSpeechTranscriptionService(
             provider.GetRequiredService<IHttpClientFactory>().CreateClient("Speech"),
             AzureCredentialFactory.Create(options.Value.CredentialMode, options.Value.ManagedIdentityClientId),
-            options, provider.GetRequiredService<ILogger<AzureSpeechTranscriptionService>>());
+            options, provider.GetRequiredService<ILogger<AzureSpeechTranscriptionService>>(),
+            provider.GetRequiredService<JobUsageService>(), provider.GetRequiredService<MediaAudioInspector>());
     });
     builder.Services.AddSingleton<TranscriptionProcessor>();
 }
@@ -122,7 +223,8 @@ if (builder.Configuration.GetValue<bool>("AzureSpeech:SynthesisEnabled"))
         return new AzureSpeechSynthesisService(
             provider.GetRequiredService<IHttpClientFactory>().CreateClient("SpeechSynthesis"),
             AzureCredentialFactory.Create(options.Value.CredentialMode, options.Value.ManagedIdentityClientId),
-            options, provider.GetRequiredService<ILogger<AzureSpeechSynthesisService>>());
+            options, provider.GetRequiredService<ILogger<AzureSpeechSynthesisService>>(),
+            provider.GetRequiredService<JobUsageService>());
     });
     builder.Services.AddSingleton<VoicePreviewService>();
     builder.Services.AddSingleton<SpeechGenerationProcessor>();
@@ -147,29 +249,50 @@ if (builder.Configuration.GetValue<bool>("AzureOpenAI:Enabled"))
         return new AzureOpenAITranslationService(
             provider.GetRequiredService<IHttpClientFactory>().CreateClient("PrivateOpenAI"),
             AzureCredentialFactory.Create(options.Value.CredentialMode, options.Value.ManagedIdentityClientId),
-            options, provider.GetRequiredService<ILogger<AzureOpenAITranslationService>>());
+            options, provider.GetRequiredService<ILogger<AzureOpenAITranslationService>>(),
+            provider.GetRequiredService<JobUsageService>());
     });
     builder.Services.AddSingleton<TranslationProcessor>();
 }
 builder.Services.AddScoped<ScriptEditingService>();
-builder.Services.AddHostedService<AudioExtractionWorker>();
+if (hosting.ProcessingEnabled)
+{ builder.Services.AddHostedService<AudioExtractionWorker>(); }
 
 var app = builder.Build();
-
-if (!app.Environment.IsDevelopment())
+if (!hosting.ProcessingEnabled)
 {
-    throw new InvalidOperationException(
-        "This app supports local development only. Configure production access controls "
-        + "and processing services before deploying to Azure.");
+    app.Logger.LogInformation("Background job processing is disabled. This instance will not scan or process stored jobs.");
+}
+
+if (!app.Environment.IsDevelopment() || hosting.Enabled || hosting.UsesSingleAccountLogin)
+{
+    app.Use(async (context, next) =>
+    {
+        context.Response.Headers.CacheControl = "no-store";
+        context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+        if (!context.Request.IsHttps || !hosting.UsesSingleAccountLogin && !AppServiceAccess.IsAllowed(
+            context.Request.Headers["X-MS-CLIENT-PRINCIPAL"], hosting.TenantId, hosting.AllowedUserObjectId))
+        {
+            app.Logger.LogWarning("Unauthorised Azure app request rejected.");
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            return;
+        }
+        await next(context);
+    });
 }
 
 app.UseExceptionHandler("/Error");
 
 app.UseRouting();
 
+if (hosting.UsesSingleAccountLogin)
+{
+    app.UseRateLimiter();
+    app.UseAuthentication();
+}
 app.UseAuthorization();
 
-app.MapStaticAssets();
+app.MapStaticAssets().AllowAnonymous();
 app.MapRazorPages()
    .WithStaticAssets();
 

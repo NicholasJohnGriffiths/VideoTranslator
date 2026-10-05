@@ -8,6 +8,7 @@ public sealed class VideoJob
     public string OriginalFileName { get; init; } = string.Empty;
     public string SelectedLanguage { get; init; } = string.Empty;
     public long FileSizeBytes { get; init; }
+    public DateTime? UsageTrackingStartedUtc { get; init; }
     [JsonInclude]
     public JobStatus Status { get; private set; } = JobStatus.Uploaded;
     public DateTime CreatedUtc { get; init; } = DateTime.UtcNow;
@@ -21,6 +22,8 @@ public sealed class VideoJob
     public SpeechGeneration? ApprovedSpeech { get; private set; }
     [JsonInclude]
     public string? ReviewMessage { get; private set; }
+    [JsonInclude]
+    public List<SegmentTimingIssue> ReviewTimingIssues { get; private set; } = [];
 
     public void ApproveSpeech(SpeechGeneration speech)
     {
@@ -30,10 +33,11 @@ public sealed class VideoJob
         }
         ApprovedSpeech = speech;
         ReviewMessage = null;
+        ReviewTimingIssues = [];
         TransitionTo(JobStatus.GeneratingSpeech);
     }
 
-    public void ReturnToScriptReview(string message)
+    public void ReturnToScriptReview(string message, IReadOnlyList<SegmentTimingIssue>? timingIssues = null)
     {
         if (Status != JobStatus.GeneratingSpeech || string.IsNullOrWhiteSpace(message))
         {
@@ -41,6 +45,7 @@ public sealed class VideoJob
         }
         Status = JobStatus.AwaitingScriptReview;
         ReviewMessage = message;
+        ReviewTimingIssues = timingIssues?.ToList() ?? [];
         ApprovedSpeech = null;
     }
 

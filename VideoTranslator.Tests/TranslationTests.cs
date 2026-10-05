@@ -146,6 +146,33 @@ public sealed class TranslationTests : IDisposable
             NullLogger<AzureOpenAITranslationService>.Instance);
 
     [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TrackedBatchesUseResponseTokensOrExplicitUnresolvedUsage(bool includeUsage)
+    {
+        var usage = new JobUsageService(new LocalJobUsageStorage(directory), Options.Create(new JobCostOptions()));
+        var handler = new OpenAIHandler { IncludeUsage = includeUsage };
+        var service = new AzureOpenAITranslationService(new HttpClient(handler), new Credential(),
+            Options.Create(Settings(batch: 1)), NullLogger<AzureOpenAITranslationService>.Instance, usage);
+        var id = Guid.NewGuid().ToString("N");
+        await service.TranslateForJobAsync(id, Source(), new LanguageOption { Code = "es-ES" }, None);
+        var cost = await usage.GetAsync(id, None);
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.Equal(includeUsage ? 0 : 2, cost.UnresolvedRequests);
+        Assert.Equal(includeUsage ? 2 : 0, cost.CompletedRequests.Count);
+        if (includeUsage)
+        {
+            Assert.All(cost.CompletedRequests, record =>
+            {
+                Assert.Equal(100, record.InputTokens);
+                Assert.Equal(20, record.CachedInputTokens);
+                Assert.Equal(30, record.OutputTokens);
+            });
+            Assert.Equal(2 * (80m / 1000 * 0.0049m + 20m / 1000 * 0.0024m + 30m / 1000 * 0.0194m), cost.KnownNzd);
+        }
+    }
+
+    [Theory]
     [InlineData("zh-CN", "Mandarin Chinese")]
     [InlineData("ar-SA", "Arabic")]
     [InlineData("es-ES", "Spanish")]
@@ -430,6 +457,7 @@ public sealed class TranslationTests : IDisposable
         public TimeSpan Delay { get; init; }
         public bool NetworkFailure { get; init; }
         public bool Oversized { get; init; }
+        public bool IncludeUsage { get; init; }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var body = await request.Content!.ReadAsStringAsync(cancellationToken);
@@ -451,7 +479,13 @@ public sealed class TranslationTests : IDisposable
             });
             return new HttpResponseMessage(Status)
             {
-                Content = new StringContent(Status == HttpStatusCode.OK ? Response(content) : "secret diagnostics", Encoding.UTF8, "application/json")
+                Content = new StringContent(Status == HttpStatusCode.OK
+                    ? IncludeUsage ? JsonSerializer.Serialize(new
+                    {
+                        choices = new[] { new { finish_reason = "stop", message = new { content } } },
+                        usage = new { prompt_tokens = 100, completion_tokens = 30, prompt_tokens_details = new { cached_tokens = 20 } }
+                    }) : Response(content)
+                    : "secret diagnostics", Encoding.UTF8, "application/json")
             };
         }
 

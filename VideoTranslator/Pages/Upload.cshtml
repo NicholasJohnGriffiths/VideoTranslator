@@ -9,6 +9,11 @@
     <h1>Start with your video.</h1>
     <p class="lead">Choose an English-language MP4 and the language you want to translate into.</p>
 </div>
+<aside class="next-step" aria-label="Next step">
+    <h2>Next step: upload your video</h2>
+    <p>Choose an English MP4, select the target language, then choose <strong>Upload &amp; create job</strong>.
+        Wait for processing to finish before reviewing the translated script.</p>
+</aside>
 <div class="upload-grid">
     <section class="surface">
         <form method="post" enctype="multipart/form-data">
@@ -59,7 +64,9 @@
             Saved scripts can be approved for full translated audio and timing.
             The audio review page can queue subtitles and final video rendering after explicit confirmation.</p>
         <hr />
-        <p class="small mb-0">Local development only.
+        <p class="small mb-0">@(HostingConfiguration.Value.UsesSingleAccountLogin
+            ? "Access requires the configured shared-account login."
+            : HostingEnvironment.IsDevelopment() ? "Local development only." : "Access is restricted to the approved Microsoft Entra account.")
             Files remain @(StorageConfiguration.Value.IsLocal ? "on this machine" : "in Azure Storage") until manually removed.
             Do not upload sensitive footage to a shared development instance.</p>
     </aside>

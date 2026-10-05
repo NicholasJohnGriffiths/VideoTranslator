@@ -1,0 +1,18 @@
+@model VideoTranslator.Models.VideoJob
+@using VideoTranslator.Models
+@{
+    var next = JobNextStep.For(Model, SpeechConfiguration.Value.Enabled, OpenAIConfiguration.Value.Enabled,
+        SpeechConfiguration.Value.SynthesisEnabled, HostingConfiguration.Value.ProcessingEnabled);
+}
+<aside class="next-step" aria-label="Next step">
+    <h2>Next step</h2>
+    <p>@next.Instruction</p>
+    @if (next.Page is not null)
+    {
+        <a class="btn btn-primary" asp-page="@next.Page" asp-route-jobId="@Model.JobId">@next.Action</a>
+    }
+    else
+    {
+        <a class="btn btn-outline-primary" asp-page="/Job" asp-route-jobId="@Model.JobId">Check job status</a>
+    }
+</aside>

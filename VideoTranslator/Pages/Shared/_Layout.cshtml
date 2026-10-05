@@ -19,13 +19,26 @@
                 </button>
                 <div class="navbar-collapse collapse d-sm-inline-flex justify-content-between">
                     <ul class="navbar-nav flex-grow-1">
+                        @if (!HostingConfiguration.Value.UsesSingleAccountLogin || User.Identity?.IsAuthenticated == true)
+                        {
                         <li class="nav-item">
                             <a class="nav-link text-dark" asp-area="" asp-page="/Upload">Upload video</a>
                         </li>
                         <li class="nav-item">
+                            <a class="nav-link text-dark" asp-area="" asp-page="/MyVideos">My videos</a>
+                        </li>
+                        <li class="nav-item">
                             <a class="nav-link text-dark" asp-area="" asp-page="/Privacy">Privacy</a>
                         </li>
+                        }
                     </ul>
+                    @if (HostingConfiguration.Value.UsesSingleAccountLogin && User.Identity?.IsAuthenticated == true)
+                    {
+                        <form method="post" asp-page="/Logout">
+                            <span class="small me-2">@User.Identity.Name</span>
+                            <button type="submit" class="btn btn-outline-primary">Sign out</button>
+                        </form>
+                    }
                 </div>
             </div>
         </nav>
@@ -38,7 +51,8 @@
 
     <footer class="border-top footer text-muted">
         <div class="container">
-            VideoTranslator / Local development &middot; <a asp-area="" asp-page="/Privacy">Storage &amp; privacy</a>
+            VideoTranslator / @(HostingEnvironment.IsDevelopment() ? "Local development" : "Protected Azure app")
+            &middot; <a asp-area="" asp-page="/Privacy">Storage &amp; privacy</a>
         </div>
     </footer>
 

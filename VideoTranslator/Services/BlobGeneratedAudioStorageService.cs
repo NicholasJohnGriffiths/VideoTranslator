@@ -41,7 +41,9 @@ public sealed class BlobGeneratedAudioStorageService(BlobContainerClient contain
         {
             if (await GetResultAsync(jobId, result.RequestId, cancellationToken) is not null)
             {
-                throw new InvalidOperationException("Committed audio cannot be overwritten.");
+                throw new JobStorageException(
+                    "Audio was committed by another worker. Saved audio was not overwritten; reload the job before retrying.",
+                    new InvalidOperationException("Committed audio cannot be overwritten."));
             }
             await using var source = File.OpenRead(audioPath);
             if (source.Length <= 44 || source.Length > 600_000_000)

@@ -11,9 +11,17 @@ namespace VideoTranslator.Services;
 
 public sealed class AzureOpenAITranslationService(
     HttpClient client, TokenCredential credential, IOptions<AzureOpenAIOptions> options,
-    ILogger<AzureOpenAITranslationService> logger) : ITranslationService
+    ILogger<AzureOpenAITranslationService> logger, JobUsageService? usage = null) : ITranslationService
 {
-    public async Task<Translation> TranslateAsync(
+    public Task<Translation> TranslateAsync(Transcript transcript,
+        LanguageOption targetLanguage, CancellationToken cancellationToken) =>
+        TranslateCoreAsync(null, transcript, targetLanguage, cancellationToken);
+
+    public Task<Translation> TranslateForJobAsync(string jobId, Transcript transcript,
+        LanguageOption targetLanguage, CancellationToken cancellationToken) =>
+        TranslateCoreAsync(jobId, transcript, targetLanguage, cancellationToken);
+
+    private async Task<Translation> TranslateCoreAsync(string? jobId,
         Transcript transcript, LanguageOption targetLanguage, CancellationToken cancellationToken)
     {
         if (!options.Value.Enabled)
@@ -34,19 +42,19 @@ public sealed class AzureOpenAITranslationService(
             if (batch.Count > 0 && (batch.Count == settings.BatchSegmentCount
                 || characters + segment.OriginalText.Length > settings.BatchCharacterLimit))
             {
-                result.Segments.AddRange(await TranslateBatchAsync(batch, targetLanguage, cancellationToken));
+                result.Segments.AddRange(await TranslateBatchAsync(jobId, batch, targetLanguage, cancellationToken));
                 batch.Clear();
                 characters = 0;
             }
             batch.Add(segment);
             characters += segment.OriginalText.Length;
         }
-        result.Segments.AddRange(await TranslateBatchAsync(batch, targetLanguage, cancellationToken));
+        result.Segments.AddRange(await TranslateBatchAsync(jobId, batch, targetLanguage, cancellationToken));
         return result;
     }
 
     private async Task<IReadOnlyList<VideoSegment>> TranslateBatchAsync(
-        IReadOnlyList<VideoSegment> segments, LanguageOption language, CancellationToken cancellationToken)
+        string? jobId, IReadOnlyList<VideoSegment> segments, LanguageOption language, CancellationToken cancellationToken)
     {
         var settings = options.Value;
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(settings.TimeoutSeconds));
@@ -87,6 +95,12 @@ public sealed class AzureOpenAITranslationService(
             using var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
             request.Content = JsonContent.Create(payload);
+            JobUsage? recorded = null;
+            if (jobId is not null)
+            {
+                if (usage is null) throw new InvalidOperationException("Job usage tracking is not configured.");
+                recorded = await usage.StartAsync(jobId, "OpenAI", linked.Token);
+            }
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, linked.Token);
             if (!response.IsSuccessStatusCode)
             {
@@ -111,11 +125,34 @@ public sealed class AzureOpenAITranslationService(
                 }
                 await buffer.WriteAsync(chunk.AsMemory(0, count), linked.Token);
             }
-            return TranslationResponseParser.Parse(System.Text.Encoding.UTF8.GetString(buffer.ToArray()), segments);
+            var json = System.Text.Encoding.UTF8.GetString(buffer.ToArray());
+            if (recorded is not null)
+            {
+                using var document = JsonDocument.Parse(json);
+                if (document.RootElement.ValueKind == JsonValueKind.Object
+                    && document.RootElement.TryGetProperty("usage", out var counts)
+                    && counts.ValueKind == JsonValueKind.Object
+                    && counts.TryGetProperty("prompt_tokens", out var input) && input.TryGetInt64(out var inputCount)
+                    && counts.TryGetProperty("completion_tokens", out var output) && output.TryGetInt64(out var outputCount))
+                {
+                    long cachedCount = 0;
+                    if (counts.TryGetProperty("prompt_tokens_details", out var details)
+                        && details.ValueKind == JsonValueKind.Object
+                        && details.TryGetProperty("cached_tokens", out var cached) && !cached.TryGetInt64(out cachedCount))
+                        throw new TranslationException("OpenAI returned invalid cached token usage.");
+                    await usage!.CompleteAsync(jobId!, recorded, 0, 0, inputCount, cachedCount, outputCount, linked.Token);
+                }
+                else logger.LogWarning("[Job: {JobId}] OpenAI omitted token usage; request cost is unresolved.", jobId);
+            }
+            return TranslationResponseParser.Parse(json, segments);
         }
         catch (AuthenticationFailedException exception)
         {
             throw new TranslationException("OpenAI authentication failed. Contact the administrator.", exception);
+        }
+        catch (JsonException exception)
+        {
+            throw new TranslationException("OpenAI returned invalid JSON; token usage could not be confirmed.", exception);
         }
         catch (HttpRequestException exception)
         {

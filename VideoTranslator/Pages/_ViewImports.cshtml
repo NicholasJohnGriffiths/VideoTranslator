@@ -3,4 +3,6 @@
 @inject Microsoft.Extensions.Options.IOptions<VideoTranslator.Configuration.JobStorageOptions> StorageConfiguration
 @inject Microsoft.Extensions.Options.IOptions<VideoTranslator.Configuration.AzureSpeechOptions> SpeechConfiguration
 @inject Microsoft.Extensions.Options.IOptions<VideoTranslator.Configuration.AzureOpenAIOptions> OpenAIConfiguration
+@inject Microsoft.AspNetCore.Hosting.IWebHostEnvironment HostingEnvironment
+@inject Microsoft.Extensions.Options.IOptions<VideoTranslator.Configuration.AzureHostingOptions> HostingConfiguration
 @addTagHelper *, Microsoft.AspNetCore.Mvc.TagHelpers

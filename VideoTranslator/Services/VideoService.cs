@@ -20,7 +20,8 @@ public sealed class VideoService(
         {
             OriginalFileName = displayName,
             SelectedLanguage = targetLanguage,
-            FileSizeBytes = length
+            FileSizeBytes = length,
+            UsageTrackingStartedUtc = DateTime.UtcNow
         };
         await storage.CreateAsync(job, content, cancellationToken);
         logger.LogInformation("[Job: {JobId}] Video uploaded for {Language}; queued for audio extraction.",

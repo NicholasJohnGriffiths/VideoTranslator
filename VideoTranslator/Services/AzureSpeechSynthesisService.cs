@@ -12,9 +12,17 @@ namespace VideoTranslator.Services;
 
 public sealed class AzureSpeechSynthesisService(
     HttpClient client, TokenCredential credential, IOptions<AzureSpeechOptions> options,
-    ILogger<AzureSpeechSynthesisService> logger) : ISpeechSynthesisService
+    ILogger<AzureSpeechSynthesisService> logger, JobUsageService? usage = null) : ISpeechSynthesisService
 {
-    public async Task<string> GenerateSpeechAsync(
+    public Task<string> GenerateSpeechAsync(string text, LanguageOption language,
+        string outputPath, CancellationToken cancellationToken) =>
+        GenerateCoreAsync(null, text, language, outputPath, cancellationToken);
+
+    public Task<string> GenerateForJobAsync(string jobId, string text, LanguageOption language,
+        string outputPath, CancellationToken cancellationToken) =>
+        GenerateCoreAsync(jobId, text, language, outputPath, cancellationToken);
+
+    private async Task<string> GenerateCoreAsync(string? jobId,
         string text, LanguageOption language, string outputPath, CancellationToken cancellationToken)
     {
         var settings = options.Value;
@@ -52,6 +60,12 @@ public sealed class AzureSpeechSynthesisService(
             request.Headers.Add("X-Microsoft-OutputFormat", SpeechWaveAudio.OutputFormat);
             request.Headers.UserAgent.ParseAdd("VideoTranslator/1.0");
             request.Content = new StringContent(ssml, Encoding.UTF8, "application/ssml+xml");
+            JobUsage? recorded = null;
+            if (jobId is not null)
+            {
+                if (usage is null) throw new InvalidOperationException("Job usage tracking is not configured.");
+                recorded = await usage.StartAsync(jobId, "Synthesis", linked.Token);
+            }
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, linked.Token);
             if (!response.IsSuccessStatusCode)
             {
@@ -65,6 +79,8 @@ public sealed class AzureSpeechSynthesisService(
                     _ => "Speech synthesis is temporarily unavailable. Try again later."
                 });
             }
+            if (recorded is not null)
+                await usage!.CompleteAsync(jobId!, recorded, 0, text.EnumerateRunes().Count(), 0, 0, 0, linked.Token);
             await using var stream = await response.Content.ReadAsStreamAsync(linked.Token);
             var bytes = await SpeechWaveAudio.ReadBoundedAsync(stream, linked.Token);
             SpeechWaveAudio.Validate(bytes);

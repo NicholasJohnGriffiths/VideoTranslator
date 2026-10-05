@@ -10,6 +10,7 @@
     <p class="lead">@Model.Job.OriginalFileName / @Model.Transcript.SourceLanguage /
         @Model.Transcript.Segments.Count segments</p>
 </div>
+<partial name="_JobNextStep" model="Model.Job" />
 <aside class="notice">
     <strong>Review the recognised English.</strong>
     Speech recognition may contain errors.

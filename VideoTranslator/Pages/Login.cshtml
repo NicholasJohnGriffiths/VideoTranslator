@@ -1,0 +1,29 @@
+@page
+@model VideoTranslator.Pages.LoginModel
+@{
+    ViewData["Title"] = "Sign in";
+}
+
+<section class="login-panel">
+    <div class="page-heading">
+        <span class="eyebrow">VIDEO TRANSLATOR / SIGN IN</span>
+        <h1>Welcome back.</h1>
+        <p class="lead">Sign in to upload, translate and download your videos.</p>
+    </div>
+    <div class="surface">
+        <form method="post">
+            <div asp-validation-summary="All" class="text-danger" role="alert"></div>
+            <input asp-for="ReturnUrl" type="hidden" />
+            <div class="mb-4">
+                <label asp-for="Username" class="form-label"></label>
+                <input asp-for="Username" class="form-control" autocomplete="username" maxlength="64" required autofocus />
+            </div>
+            <div class="mb-4">
+                <label asp-for="Password" class="form-label"></label>
+                <input asp-for="Password" class="form-control" autocomplete="current-password" maxlength="256" required />
+            </div>
+            <button type="submit" class="btn btn-primary">Sign in</button>
+        </form>
+        <p class="small mt-4 mb-0">This initial release uses one shared account. Sign out when using a shared device.</p>
+    </div>
+</section>

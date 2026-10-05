@@ -8,14 +8,27 @@
     <h1>Your translated video.</h1>
     <p class="lead">@Model.Job.OriginalFileName / @Model.Result.DurationSeconds.ToString("0.00") seconds</p>
 </div>
+<aside class="next-step" aria-label="Next step">
+    <h2>Finished: watch or download</h2>
+    <p>Press play below to watch your translated video. Subtitles are on by default.
+        Use <strong>Download video</strong> to save a copy. No more approvals are needed.</p>
+    <a class="btn btn-outline-primary" asp-page="/MyVideos">Return to my videos</a>
+</aside>
 <section class="surface">
+    <partial name="_JobCost" model="Model.Job" />
     <p>The original audio has been replaced. The picture is preserved; subtitles can be switched on or off.
         The video, subtitles and script all use the same approved saved text.</p>
     <video controls preload="metadata" aria-label="Final translated video" style="width:100%;max-height:65vh">
         <source src="@Url.Page("/Result", "Video", new { jobId = Model.Job.JobId })" type="video/mp4" />
-        <track kind="subtitles" label="@Model.Job.ApprovedSpeech!.Language.DisplayName"
+        <track default kind="subtitles" label="@Model.Job.ApprovedSpeech!.Language.DisplayName"
                srclang="@Model.Job.SelectedLanguage" src="@Url.Page("/Result", "Subtitles", new { jobId = Model.Job.JobId })" />
     </video>
+    <div class="form-check mt-3" data-subtitle-controls hidden>
+        <input type="checkbox" id="show-subtitles" class="form-check-input" data-subtitle-toggle checked />
+        <label for="show-subtitles" class="form-check-label">Show subtitles (@Model.Job.ApprovedSpeech!.Language.DisplayName)</label>
+    </div>
+    <p class="small mt-2">Subtitles are on by default during browser playback. You can switch them off here
+        or in the player's subtitle menu. For a downloaded MP4, enable its subtitle track in a compatible player.</p>
     <p data-video-error hidden role="alert">The video could not be loaded. Check your connection or contact the administrator.</p>
     <p data-subtitle-error hidden role="alert">The subtitles could not be loaded. Try reloading or contact the administrator.</p>
     <div class="d-flex flex-wrap gap-2 mt-3">

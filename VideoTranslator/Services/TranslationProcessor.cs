@@ -28,7 +28,7 @@ public sealed class TranslationProcessor(
             if (translation is null)
             {
                 logger.LogInformation("[Job: {JobId}] Starting {Language} translation via private OpenAI.", job.JobId, language.Code);
-                translation = await translator.TranslateAsync(transcript, language, cancellationToken);
+                translation = await translator.TranslateForJobAsync(job.JobId, transcript, language, cancellationToken);
                 TranslationMetadata.ValidateAgainstTranscript(translation, transcript, language.Code);
                 await translations.SaveTranslationAsync(job.JobId, translation, cancellationToken);
             }

@@ -11,9 +11,16 @@ namespace VideoTranslator.Services;
 
 public sealed class AzureSpeechTranscriptionService(
     HttpClient client, TokenCredential credential, IOptions<AzureSpeechOptions> options,
-    ILogger<AzureSpeechTranscriptionService> logger) : ITranscriptionService
+    ILogger<AzureSpeechTranscriptionService> logger, JobUsageService? usage = null,
+    MediaAudioInspector? inspector = null) : ITranscriptionService
 {
-    public async Task<Transcript> TranscribeAsync(string audioPath, CancellationToken cancellationToken)
+    public Task<Transcript> TranscribeAsync(string audioPath, CancellationToken cancellationToken) =>
+        TranscribeCoreAsync(null, audioPath, cancellationToken);
+
+    public Task<Transcript> TranscribeForJobAsync(string jobId, string audioPath, CancellationToken cancellationToken) =>
+        TranscribeCoreAsync(jobId, audioPath, cancellationToken);
+
+    private async Task<Transcript> TranscribeCoreAsync(string? jobId, string audioPath, CancellationToken cancellationToken)
     {
         var settings = options.Value;
         var fileSize = new FileInfo(audioPath).Length;
@@ -40,6 +47,14 @@ public sealed class AzureSpeechTranscriptionService(
             var definition = JsonSerializer.Serialize(new { locales = new[] { settings.SourceLocale } });
             form.Add(new StringContent(definition, Encoding.UTF8, "application/json"), "definition");
             request.Content = form;
+            JobUsage? recorded = null;
+            double seconds = 0;
+            if (jobId is not null)
+            {
+                if (usage is null || inspector is null) throw new InvalidOperationException("Job usage tracking is not configured.");
+                seconds = await inspector.GetPcmDurationAsync(audioPath, linked.Token);
+                recorded = await usage.StartAsync(jobId, "Transcription", linked.Token);
+            }
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, linked.Token);
             if (!response.IsSuccessStatusCode)
             {
@@ -55,6 +70,8 @@ public sealed class AzureSpeechTranscriptionService(
                     _ => "Speech transcription is temporarily unavailable. Please try again later."
                 });
             }
+            if (recorded is not null)
+                await usage!.CompleteAsync(jobId!, recorded, seconds, 0, 0, 0, 0, linked.Token);
             var json = await response.Content.ReadAsStringAsync(linked.Token);
             return SpeechTranscriptionParser.Parse(json, settings.SourceLocale);
         }

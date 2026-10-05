@@ -23,7 +23,8 @@ public sealed class SpeechGenerationApprovalService(IJobStorageService jobs, Scr
         }
         var script = new SpeechGeneration
         {
-            Language = language, ScriptRevision = revision,
+            Language = language, ScriptRevision = revision, MaximumSpeed = SpeechGeneration.NewApprovalMaximumSpeed,
+            UseAvailableGaps = true,
             Segments = saved.Translation.Segments.Select(segment => new VideoSegment
             {
                 Sequence = segment.Sequence, Start = segment.Start, End = segment.End,

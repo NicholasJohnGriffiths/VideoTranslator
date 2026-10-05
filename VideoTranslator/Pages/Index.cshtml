@@ -5,10 +5,11 @@
 }
 
 <section class="hero">
-    <span class="eyebrow">VIDEO TRANSLATOR / LOCAL DEVELOPMENT</span>
+    <span class="eyebrow">VIDEO TRANSLATOR / @(HostingEnvironment.IsDevelopment() ? "LOCAL DEVELOPMENT" : "PROTECTED AZURE APP")</span>
     <h1>Your video.<br />A new language.</h1>
     <p class="lead">Prepare English videos for Mandarin Chinese, Arabic, Spanish and Hindi audiences.</p>
     <a class="btn btn-primary btn-lg" asp-page="/Upload">Upload a video</a>
+    <a class="btn btn-outline-primary btn-lg" asp-page="/MyVideos">My videos</a>
 </section>
 <section class="workflow-grid" aria-label="Planned translation workflow">
     <article class="surface">
@@ -28,7 +29,7 @@
     </article>
 </section>
 <aside class="notice">
-    <strong>Local development workflow.</strong>
+    <strong>@(HostingEnvironment.IsDevelopment() ? "Local development workflow." : "Protected Azure workflow.")</strong>
     Uploads and job tracking use @(StorageConfiguration.Value.IsLocal ? "local files" : "a private Azure Blob container").
     Videos are validated and audio is extracted in the background, one job at a time.
     @(SpeechConfiguration.Value.Enabled ? "English speech is transcribed using Azure Speech in Australia East; Speech charges apply." : "Speech transcription is disabled.")

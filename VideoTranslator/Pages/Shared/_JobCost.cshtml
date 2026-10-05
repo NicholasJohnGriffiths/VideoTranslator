@@ -1,0 +1,64 @@
+@model VideoTranslator.Models.VideoJob
+@using VideoTranslator.Services
+@inject JobUsageService Usage
+@inject Microsoft.Extensions.Logging.ILoggerFactory Loggers
+@{
+    VideoTranslator.Models.JobCostSummary? cost = null;
+    var unavailable = false;
+    try
+    {
+        cost = await Usage.GetAsync(Model.JobId, Context.RequestAborted);
+    }
+    catch (JobStorageException exception)
+    {
+        Loggers.CreateLogger("JobCost").LogError(exception, "[Job: {JobId}] Cost estimate unavailable.", Model.JobId);
+        unavailable = true;
+    }
+}
+<div class="job-cost">
+    @if (unavailable)
+    {
+        <p class="text-danger mb-0" role="alert">Cost estimate unavailable: usage storage could not be read. Try refreshing.</p>
+    }
+    else if (cost is not null)
+    {
+        @if (Model.UsageTrackingStartedUtc is null && cost.CompletedRequests.Count == 0)
+        {
+            <strong>Estimated AI cost: unavailable</strong>
+        }
+        else
+        {
+            <strong>Estimated tracked AI cost: NZ$@cost.KnownNzd.ToString("0.0000")</strong>
+        }
+        @if (Model.UsageTrackingStartedUtc is null)
+        {
+            <p class="small mb-0">Incomplete history: tracking began after this job was uploaded.
+                @(cost.CompletedRequests.Count == 0 ? "No tracked charges available." : "Only newly tracked requests are included.")</p>
+        }
+        @if (cost.UnresolvedRequests > 0)
+        {
+            <p class="small text-danger mb-0">@cost.UnresolvedRequests request(s) have unconfirmed usage or are still running.
+                Their possible charges are not included.</p>
+        }
+        <details class="small mt-1">
+            <summary>Cost breakdown &amp; exclusions</summary>
+            @foreach (var group in cost.CompletedRequests.GroupBy(request => request.Service))
+            {
+                <p class="mb-1">@group.Key: NZ$@group.Sum(request => request.EstimatedNzd!.Value).ToString("0.0000")
+                    (@group.Count() tracked request(s))</p>
+            }
+            <p class="mb-1">Transcription: @cost.CompletedRequests.Sum(request => request.Seconds).ToString("0.00") seconds;
+                synthesis: @cost.CompletedRequests.Sum(request => request.Characters) text characters;
+                OpenAI: @cost.CompletedRequests.Sum(request => request.InputTokens) input tokens
+                (@cost.CompletedRequests.Sum(request => request.CachedInputTokens) cached),
+                @cost.CompletedRequests.Sum(request => request.OutputTokens) output tokens.</p>
+            <p class="mb-1">Estimated public retail NZD prices, not an Azure invoice. Includes tracked previews and retries;
+                cache reuse adds no AI charge. Excludes hosting, storage, transfer, networking, tax, discounts and free allowances.
+                Synthesis character counts may differ from Azure billing rules.</p>
+            @if (cost.CompletedRequests.Count > 0)
+            {
+                <p class="mb-0">Rate snapshot dates: @string.Join(", ", cost.CompletedRequests.Select(request => request.RateDate).Distinct())</p>
+            }
+        </details>
+    }
+</div>

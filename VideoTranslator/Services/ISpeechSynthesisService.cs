@@ -6,4 +6,7 @@ public interface ISpeechSynthesisService
 {
     Task<string> GenerateSpeechAsync(
         string text, LanguageOption language, string outputPath, CancellationToken cancellationToken);
+    Task<string> GenerateForJobAsync(string jobId, string text, LanguageOption language,
+        string outputPath, CancellationToken cancellationToken) =>
+        GenerateSpeechAsync(text, language, outputPath, cancellationToken);
 }

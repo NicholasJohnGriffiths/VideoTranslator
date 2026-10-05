@@ -19,6 +19,30 @@ public sealed class TranscriptionTests : IDisposable
     public TranscriptionTests() => Directory.CreateDirectory(directory);
 
     [Fact]
+    public async Task TrackedTranscriptionUsesInspectedAudioDuration()
+    {
+        var usage = new JobUsageService(new LocalJobUsageStorage(directory), Options.Create(new JobCostOptions()));
+        var handler = new SpeechHandler();
+        var inspector = new MediaAudioInspector(new DurationRunner(), Options.Create(new MediaOptions()));
+        var speech = new AzureSpeechTranscriptionService(new HttpClient(handler), new TestCredential(),
+            Options.Create(new AzureSpeechOptions { Enabled = true, Endpoint = "https://speech.example.cognitiveservices.azure.com/" }),
+            NullLogger<AzureSpeechTranscriptionService>.Instance, usage, inspector);
+        var path = Path.Combine(directory, "tracked.wav");
+        await File.WriteAllBytesAsync(path, VoicePreviewTests.Wave());
+        var id = Guid.NewGuid().ToString("N");
+        await speech.TranscribeForJobAsync(id, path, CancellationToken.None);
+        var cost = await usage.GetAsync(id, CancellationToken.None);
+        Assert.Equal(5, Assert.Single(cost.CompletedRequests).Seconds);
+        Assert.Equal(5m / 3600 * 0.6360m, cost.KnownNzd);
+    }
+
+    private sealed class DurationRunner : IMediaProcessRunner
+    {
+        public Task<string> RunAsync(string executable, IReadOnlyList<string> arguments, CancellationToken cancellationToken) =>
+            Task.FromResult("""{"format":{"duration":"5"},"streams":[{"codec_name":"pcm_s16le","sample_rate":"16000","channels":1,"bits_per_sample":16}]}""");
+    }
+
+    [Fact]
     public void ParsesOrderedSegmentsUsingPhraseTimestampsNotCombinedText()
     {
         var transcript = SpeechTranscriptionParser.Parse(ValidJson, "en-NZ");

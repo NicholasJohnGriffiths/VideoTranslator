@@ -11,9 +11,10 @@ public sealed class FFmpegSpeechTimingService(
     public static double RequiredSpeed(double sourceSeconds, double slotSeconds, double maximumSpeed)
     {
         if (!double.IsFinite(sourceSeconds) || sourceSeconds <= 0 || !double.IsFinite(slotSeconds) || slotSeconds <= 0
-            || !double.IsFinite(maximumSpeed) || maximumSpeed is < 1 or > 1.25)
+            || !double.IsFinite(maximumSpeed) || maximumSpeed < 1
+            || maximumSpeed > SpeechGeneration.NewApprovalMaximumSpeed)
         {
-            throw new InvalidDataException("Speech timing requires positive finite durations and a speed limit between 1 and 1.25.");
+            throw new InvalidDataException($"Speech timing requires positive finite durations and a speed limit between 1 and {SpeechGeneration.NewApprovalMaximumSpeed:0.00}.");
         }
         var speed = Math.Max(1, sourceSeconds / slotSeconds);
         if (speed > maximumSpeed)
@@ -65,7 +66,7 @@ public sealed class FFmpegSpeechTimingService(
         foreach (var (segment, index) in script.Segments.Select((segment, index) => (segment, index)))
         {
             var start = Samples(segment.Start.TotalSeconds);
-            var end = Samples(segment.End.TotalSeconds);
+            var end = Samples(SpeechTimingWindow.EndSeconds(script, index, videoDurationSeconds));
             if (start > cursor)
             {
                 await SilenceAsync(start - cursor, folder, clips, cancellationToken);
@@ -79,7 +80,7 @@ public sealed class FFmpegSpeechTimingService(
                     throw new InvalidDataException("Blank segments must have no speech audio.");
                 }
                 await SilenceAsync(slot, folder, clips, cancellationToken);
-                timings.Add(new(segment.Sequence, 0, (segment.End - segment.Start).TotalSeconds, 1));
+                timings.Add(new(segment.Sequence, 0, slot / 16000d, 1));
             }
             else
             {
@@ -110,11 +111,11 @@ public sealed class FFmpegSpeechTimingService(
                 var clip = Path.Combine(folder, $"{clips.Count:D6}.wav");
                 if (Samples(await inspector.GetPcmDurationAsync(fitted, cancellationToken)) > slot)
                 {
-                    throw new SpeechTimingException($"Segment {segment.Sequence} is longer than its original slot. Shorten its wording; speech was not cut off.");
+                    throw new SpeechTimingException($"Segment {segment.Sequence} is longer than its available time window. Shorten its wording; speech was not cut off.");
                 }
                 await RunAsync(["-i", fitted, "-af", $"apad=whole_len={slot},atrim=end_sample={slot}"], clip, cancellationToken);
                 clips.Add(Path.GetFileName(clip));
-                timings.Add(new(segment.Sequence, rawSeconds, (segment.End - segment.Start).TotalSeconds, speed));
+                timings.Add(new(segment.Sequence, rawSeconds, slot / 16000d, speed));
             }
             cursor = end;
         }

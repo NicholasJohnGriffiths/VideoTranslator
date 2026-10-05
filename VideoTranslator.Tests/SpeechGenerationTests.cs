@@ -65,6 +65,42 @@ public sealed class SpeechGenerationTests : IDisposable
         Assert.Throws<SpeechTimingException>(() => FFmpegSpeechTimingService.RequiredSpeed(source, slot, 1.25));
 
     [Theory]
+    [InlineData(1.63)]
+    [InlineData(1.75)]
+    [InlineData(1.96)]
+    [InlineData(2.00)]
+    public void IncreasedPolicyAcceptsRequiredSpeedUpToExactLimit(double speed) =>
+        Assert.Equal(speed, FFmpegSpeechTimingService.RequiredSpeed(speed, 1, SpeechGeneration.NewApprovalMaximumSpeed), 8);
+
+    [Fact]
+    public void IncreasedPolicyStillRejectsSpeechAboveTheLimit() =>
+        Assert.Throws<SpeechTimingException>(() =>
+            FFmpegSpeechTimingService.RequiredSpeed(2.000001, 1, SpeechGeneration.NewApprovalMaximumSpeed));
+
+    [Fact]
+    public void PreviousApprovalKeepsItsFrozenLimit()
+    {
+        var original = new SpeechGeneration { Language = Language(), MaximumSpeed = 1.75, Segments = Script().Segments };
+        var restored = JsonSerializer.Deserialize<SpeechGeneration>(JsonSerializer.Serialize(original))!;
+        SpeechGenerationMetadata.Validate(restored, "es-ES");
+        Assert.Equal(1.75, restored.MaximumSpeed);
+        Assert.Throws<SpeechTimingException>(() =>
+            FFmpegSpeechTimingService.RequiredSpeed(1.96, 1, restored.MaximumSpeed));
+    }
+
+    [Fact]
+    public void LegacyApprovalLimitSurvivesSerializationAndMissingField()
+    {
+        var original = Script();
+        var restored = JsonSerializer.Deserialize<SpeechGeneration>(JsonSerializer.Serialize(original))!;
+        Assert.Equal(1.25, restored.MaximumSpeed);
+        SpeechGenerationMetadata.Validate(restored, "es-ES");
+        Assert.Throws<SpeechTimingException>(() =>
+            FFmpegSpeechTimingService.RequiredSpeed(1.63, 1, restored.MaximumSpeed));
+        Assert.Equal(1.25, JsonSerializer.Deserialize<SpeechGeneration>("{}")!.MaximumSpeed);
+    }
+
+    [Theory]
     [InlineData(0, 1)]
     [InlineData(1, 0)]
     [InlineData(double.NaN, 1)]
@@ -92,7 +128,7 @@ public sealed class SpeechGenerationTests : IDisposable
     public void InvalidResultAndSpeedPolicyCannotBeAccepted()
     {
         Assert.Throws<InvalidDataException>(() => FFmpegSpeechTimingService.RequiredSpeed(1, 1, double.NaN));
-        Assert.Throws<InvalidDataException>(() => FFmpegSpeechTimingService.RequiredSpeed(1, 1, 1.5));
+        Assert.Throws<InvalidDataException>(() => FFmpegSpeechTimingService.RequiredSpeed(1, 1, 2.000001));
         var script = Script();
         var invalid = new TimedAudioResult
         {
@@ -166,6 +202,8 @@ public sealed class SpeechGenerationTests : IDisposable
         await service.ApproveAsync(state.Clone(), Language(), "revision", ["saved edit", ""], None);
         Assert.Equal(JobStatus.GeneratingSpeech, state.Job.Status);
         Assert.NotNull(state.Job.ApprovedSpeech);
+        Assert.Equal(2.00, state.Job.ApprovedSpeech.MaximumSpeed);
+        Assert.True(state.Job.ApprovedSpeech.UseAvailableGaps);
         Assert.Equal("saved edit", state.Job.ApprovedSpeech.Segments[0].TranslatedText);
         Assert.Equal("", state.Job.ApprovedSpeech.Segments[1].TranslatedText);
         Assert.Equal("es-ES-ElviraNeural", state.Job.ApprovedSpeech.Language.VoiceName);
@@ -222,7 +260,14 @@ public sealed class SpeechGenerationTests : IDisposable
         using var audio = new MemoryStream();
         await store.CopyAudioAsync(id, script.RequestId, audio, None);
         Assert.Equal(VoicePreviewTests.Wave(), audio.ToArray());
-        await Assert.ThrowsAsync<InvalidOperationException>(() => store.SaveAsync(id, result, raw, None));
+        var competingAudio = VoicePreviewTests.Wave();
+        competingAudio[^1] ^= 1;
+        await File.WriteAllBytesAsync(raw, competingAudio);
+        var conflict = await Assert.ThrowsAsync<JobStorageException>(() => store.SaveAsync(id, result, raw, None));
+        Assert.Contains("not overwritten", conflict.Message);
+        using var preserved = new MemoryStream();
+        await store.CopyAudioAsync(id, script.RequestId, preserved, None);
+        Assert.Equal(audio.ToArray(), preserved.ToArray());
         if (blob)
         {
             Assert.EndsWith("/translated-audio.wav", harness.Handler.Writes[0]);
@@ -260,12 +305,165 @@ public sealed class SpeechGenerationTests : IDisposable
         await Processor(state, new SpeechStub { Samples = 24000 }, new Runner()).ProcessAsync(state.Clone(), None);
         Assert.Equal(JobStatus.AwaitingScriptReview, state.Job.Status);
         Assert.Contains("Segment 1", state.Job.ReviewMessage);
+        Assert.Contains("Segment 2", state.Job.ReviewMessage);
+        Assert.Equal(new[] { 1, 2 }, state.Job.ReviewTimingIssues.Select(issue => issue.Sequence));
         Assert.Null(state.Result);
         var pending = ReviewJob(); pending.ApproveSpeech(Script(blankSecond: true));
         var failure = new State(pending) { FailSaving = true };
         await Assert.ThrowsAsync<JobStorageException>(() => Processor(failure, new SpeechStub(), new Runner()).ProcessAsync(failure.Clone(), None));
         Assert.Equal(JobStatus.GeneratingSpeech, failure.Job.Status);
         Assert.Null(failure.Result);
+    }
+
+    [Fact]
+    public async Task ProcessorChecksAllSegmentsCachesFailuresAndClearsReportOnReapproval()
+    {
+        var job = ReviewJob(); job.ApproveSpeech(Script());
+        var state = new State(job);
+        var speech = new SpeechStub { Samples = 24000 };
+        var runner = new Runner();
+        await Processor(state, speech, runner).ProcessAsync(state.Clone(), None);
+        Assert.Equal(2, speech.Calls);
+        Assert.Equal(2, state.Job.ReviewTimingIssues.Count);
+        Assert.Contains("Timing checked for all 2 segments", state.Job.ReviewMessage);
+        Assert.DoesNotContain(runner.Calls, arguments => arguments.Contains("-af"));
+        Assert.DoesNotContain("audio", state.Events);
+        var restored = state.Clone();
+        Assert.Equal(state.Job.ReviewTimingIssues, restored.ReviewTimingIssues);
+        restored.ApproveSpeech(new SpeechGeneration
+        {
+            Language = Language(), MaximumSpeed = 2, Segments = Script().Segments
+        });
+        Assert.Null(restored.ReviewMessage);
+        Assert.Empty(restored.ReviewTimingIssues);
+        await state.UpdateAsync(restored, JobStatus.AwaitingScriptReview, None);
+        await Processor(state, speech, new Runner()).ProcessAsync(state.Clone(), None);
+        Assert.Equal(2, speech.Calls);
+        Assert.Equal(JobStatus.TranslatedAudioReady, state.Job.Status);
+        Assert.Empty(state.Job.ReviewTimingIssues);
+    }
+
+    [Fact]
+    public async Task TimingReportOmitsBlankAndFittingSegments()
+    {
+        var script = new SpeechGeneration
+        {
+            Language = Language(), Segments =
+            [
+                Script().Segments[0],
+                new() { Sequence = 2, Start = TimeSpan.FromSeconds(2), End = TimeSpan.FromSeconds(4),
+                    OriginalText = "Second", TranslatedText = "Fits" },
+                new() { Sequence = 3, Start = TimeSpan.FromSeconds(4), End = TimeSpan.FromSeconds(5),
+                    OriginalText = "Third", TranslatedText = "" }
+            ]
+        };
+        var job = ReviewJob(); job.ApproveSpeech(script);
+        var state = new State(job);
+        var speech = new SpeechStub { Samples = 24000 };
+        await Processor(state, speech, new Runner()).ProcessAsync(state.Clone(), None);
+        Assert.Equal(2, speech.Calls);
+        Assert.Equal(1, Assert.Single(state.Job.ReviewTimingIssues).Sequence);
+        Assert.Contains("all 3 segments", state.Job.ReviewMessage);
+        Assert.Null(state.Result);
+    }
+
+    [Fact]
+    public async Task AvailableGapsKeepNaturalSpeechAndPadUntilNextStartAndVideoEnd()
+    {
+        var script = new SpeechGeneration
+        {
+            Language = Language(), MaximumSpeed = 2, UseAvailableGaps = true, Segments = Script().Segments
+        };
+        var runner = new Runner();
+        var first = Path.Combine(directory, "first.wav");
+        var last = Path.Combine(directory, "last.wav");
+        runner.Durations[first] = 1.5;
+        runner.Durations[last] = 1.8;
+        var service = new FFmpegSpeechTimingService(runner, Inspector(runner), Options.Create(new MediaOptions()));
+        var timings = await service.SynchronizeAsync(script, [first, last], 5,
+            Path.Combine(directory, "output.wav"), None);
+        Assert.All(timings, timing =>
+        {
+            Assert.Equal(2, timing.SlotSeconds);
+            Assert.Equal(1, timing.Speed);
+        });
+        Assert.DoesNotContain(runner.Calls, args => args.Any(arg => arg.StartsWith("atempo=")));
+        Assert.Equal(2, runner.Calls.Count(args => args.Contains("apad=whole_len=32000,atrim=end_sample=32000")));
+        SpeechGenerationMetadata.ValidateResult(new TimedAudioResult
+        {
+            RequestId = script.RequestId, DurationSeconds = 5, Segments = timings.ToList()
+        }, script);
+    }
+
+    [Theory]
+    [InlineData(2.54, false)]
+    [InlineData(4.0001, true)]
+    public async Task GapWindowAcceleratesOnlyWhenNecessaryAndRejectsOverlap(double seconds, bool rejected)
+    {
+        var script = new SpeechGeneration
+        {
+            Language = Language(), MaximumSpeed = 2, UseAvailableGaps = true, Segments = Script(true).Segments
+        };
+        var runner = new Runner();
+        var raw = Path.Combine(directory, "gap.wav");
+        runner.Durations[raw] = seconds;
+        var service = new FFmpegSpeechTimingService(runner, Inspector(runner), Options.Create(new MediaOptions()));
+        if (rejected)
+        {
+            await Assert.ThrowsAsync<SpeechTimingException>(() =>
+                service.SynchronizeAsync(script, [raw, null], 5, Path.Combine(directory, "output.wav"), None));
+            Assert.DoesNotContain(runner.Calls, args => args.Any(arg => arg.StartsWith("apad=")));
+        }
+        else
+        {
+            var result = await service.SynchronizeAsync(script, [raw, null], 5, Path.Combine(directory, "output.wav"), None);
+            Assert.InRange(result[0].Speed, 1.27, 1.28);
+            Assert.Equal(2, result[0].SlotSeconds);
+            Assert.Equal(0, result[1].SourceSeconds);
+        }
+    }
+
+    [Fact]
+    public async Task ProcessorUsesGapPolicyForPreflightAndAssembly()
+    {
+        var job = ReviewJob();
+        job.ApproveSpeech(new SpeechGeneration
+        {
+            Language = Language(), MaximumSpeed = 2, UseAvailableGaps = true, Segments = Script().Segments
+        });
+        var state = new State(job);
+        var runner = new Runner();
+        await Processor(state, new SpeechStub { Samples = 40640 }, runner).ProcessAsync(state.Clone(), None);
+        Assert.Equal(JobStatus.TranslatedAudioReady, state.Job.Status);
+        Assert.All(state.Result!.Segments, timing => Assert.Equal(2, timing.SlotSeconds));
+        Assert.Empty(state.Job.ReviewTimingIssues);
+    }
+
+    [Fact]
+    public void GapPolicyIsFrozenAndLegacyTimingStillValidates()
+    {
+        var old = Script();
+        Assert.False(JsonSerializer.Deserialize<SpeechGeneration>("{}")!.UseAvailableGaps);
+        Assert.False(JsonSerializer.Deserialize<SpeechGeneration>(JsonSerializer.Serialize(old))!.UseAvailableGaps);
+        SpeechGenerationMetadata.ValidateResult(Result(old), old);
+        var current = new SpeechGeneration
+        {
+            Language = Language(), UseAvailableGaps = true, Segments = old.Segments
+        };
+        Assert.True(JsonSerializer.Deserialize<SpeechGeneration>(JsonSerializer.Serialize(current))!.UseAvailableGaps);
+        Assert.Throws<InvalidDataException>(() => SpeechGenerationMetadata.ValidateResult(Result(current), current));
+        Assert.Equal(2, SpeechTimingWindow.SlotSeconds(current, 0, 5));
+        Assert.Equal(2, SpeechTimingWindow.SlotSeconds(current, 1, 5));
+        var adjacent = new SpeechGeneration
+        {
+            UseAvailableGaps = true, Segments =
+            [
+                new() { Start = TimeSpan.Zero, End = TimeSpan.FromSeconds(1) },
+                new() { Start = TimeSpan.FromSeconds(1), End = TimeSpan.FromSeconds(2) }
+            ]
+        };
+        Assert.Equal(1, SpeechTimingWindow.SlotSeconds(adjacent, 0, 2));
+        Assert.Equal(1, SpeechTimingWindow.SlotSeconds(adjacent, 1, 2));
     }
 
     [Fact]
